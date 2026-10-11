@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
+import ts from 'typescript';
 import { createServer } from 'vite';
 
 async function withLibraryService(invoke, check) {
@@ -44,5 +46,35 @@ test('an in-flight settings failure stops import before any file operation', asy
     const importing = assert.rejects(service.importPdfsToLibrary({ paths: ['fixture.pdf'] }), /Native settings failed/);
     release(); await updating; await importing;
     assert.deepEqual(calls, ['library_update_settings']);
+  });
+});
+
+test('Zotero import saves only its directory and preserves a queued preference edit', async () => {
+  const source = ts.createSourceFile('LiteratureLibraryView.tsx', readFileSync(
+    new URL('../src/features/literature/LiteratureLibraryView.tsx', import.meta.url), 'utf8',
+  ), ts.ScriptTarget.Latest, true);
+  const find = (node, match) => match(node) ? node : ts.forEachChild(node, child => find(child, match));
+  const handler = find(source, node => ts.isVariableDeclaration(node) && node.name.getText(source) === 'handleImportZoteroLibrary');
+  assert.ok(handler);
+  const save = find(handler, node => ts.isCallExpression(node) && node.expression.getText(source) === 'updateLibrarySettings');
+  assert.ok(save);
+  // Exercise the actual import handler's save expression, not a copied patch.
+  const saveImportDirectory = new Function('updateLibrarySettings', 'activeSettings', 'dataDir', `return ${save.getText(source)};`);
+  const staleSettings = { openAlexEnabled: true, autoRenameFiles: false, zoteroLocalDataDir: 'previous' };
+  let persisted = { ...staleSettings }, release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const patches = [];
+  await withLibraryService(async (command, args) => {
+    assert.equal(command, 'library_update_settings');
+    patches.push(args.settings);
+    if (patches.length === 1) await gate;
+    persisted = { ...persisted, ...args.settings };
+    return { ...persisted };
+  }, async service => {
+    const editing = service.updateLibrarySettings({ openAlexEnabled: false, autoRenameFiles: true });
+    const importing = saveImportDirectory(service.updateLibrarySettings, staleSettings, 'selected-Zotero');
+    release(); await Promise.all([editing, importing]);
+    assert.deepEqual(persisted, { openAlexEnabled: false, autoRenameFiles: true, zoteroLocalDataDir: 'selected-Zotero' });
+    assert.deepEqual(patches[1], { zoteroLocalDataDir: 'selected-Zotero' });
   });
 });

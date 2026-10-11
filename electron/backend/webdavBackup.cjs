@@ -164,7 +164,7 @@ async function collectFiles(root, authorize) {
   }
 
   await walk(root);
-  return output;
+  return { root, files: output };
 }
 
 function configuredMineruRoots(appPaths) {
@@ -263,12 +263,12 @@ async function collectBackupSources(context, backupId) {
 
   if (library.webdav.includeDerived !== false) {
     for (const root of configuredMineruRoots(appPaths)) {
-      const files = await collectFiles(root, context.authorizeLocalRead);
+      const { root: collectedRoot, files } = await collectFiles(root, context.authorizeLocalRead);
       const isDefaultRoot = path.resolve(root) === path.resolve(appPaths.mineruCacheDir);
       const rootLabel = isDefaultRoot ? '' : `root-${hashBytes(Buffer.from(root)).slice(0, 8)}`;
 
       for (const filePath of files) {
-        const relative = path.relative(root, filePath).replace(/\\/g, '/');
+        const relative = path.relative(collectedRoot, filePath).replace(/\\/g, '/');
         const kind = classifyDerivedFile(relative);
         if (!kind) continue;
 

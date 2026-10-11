@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, mkdirSync, writeFileSync, symlinkSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -250,6 +250,57 @@ test('WebDAV backup uploads and restores library, notes, and RAG SQLite database
     target.close();
   }
 });
+
+for (const custom of [false, true]) {
+  test(`derived backup uses canonical relative paths for an approved ${custom ? 'configured' : 'default'} cache link`, async () => {
+    const source = createContext('paperquay-webdav-cache-source-');
+    const target = createContext('paperquay-webdav-cache-target-');
+    const webdav = new MemoryWebdav();
+    try {
+      seedLibrary(source);
+      const library = source.store.load();
+      library.webdav.includeDerived = true;
+      source.store.save(library);
+      const actualRoot = path.join(source.appPaths.dataDir, 'cache-target');
+      const alias = path.join(source.appPaths.dataDir, 'cache-alias');
+      const files = new Map([
+        ['doc/full.md', 'Parsed fixture text'],
+        ['doc/translations/zh.json', '{"text":"Fixture translation"}'],
+        ['doc/summaries/overview.json', '{"summary":"Fixture summary"}'],
+      ]);
+      for (const [relative, content] of files) {
+        const file = path.join(actualRoot, relative);
+        mkdirSync(path.dirname(file), { recursive: true }); writeFileSync(file, content);
+      }
+      symlinkSync(actualRoot, alias, process.platform === 'win32' ? 'junction' : 'dir');
+      if (custom) {
+        mkdirSync(source.appPaths.mineruCacheDir, { recursive: true });
+        mkdirSync(path.dirname(source.appPaths.configPath), { recursive: true });
+        writeFileSync(source.appPaths.configPath, JSON.stringify({ settings: { mineruCacheDir: alias } }));
+      } else source.appPaths.mineruCacheDir = alias;
+      const context = { ...source, authorizeLocalRead: (file: string) => realpathSync.native(file) };
+      const backup = await runBackup(context, webdav);
+      assert.equal(backup.ok, true); assert.equal(backup.derivedCount, files.size);
+      const derived = backup.objects.filter((object: { kind: string }) => ['mineru', 'translation', 'summary'].includes(object.kind));
+      const client = new WebdavClient({ endpointUrl: 'https://backup.invalid/dav', remoteRoot: 'paperquay/fixtures' });
+      for (const object of derived) {
+        assert.equal(object.remotePath.split('/').some((part: string) => part === '..' || part === '.'), false);
+        assert.ok(new URL(client.buildUrl(object.remotePath)).pathname.startsWith('/dav/paperquay/fixtures/latest/derived/'));
+        const relative = object.remotePath.replace(/^latest\/derived\/(?:root-[a-f0-9]{8}\/)?/, '');
+        assert.ok(files.has(relative)); assert.equal(webdav.objects.get(object.remotePath)?.toString(), files.get(relative));
+      }
+      const repeated = await runBackup(context, webdav);
+      assert.equal(repeated.ok, true);
+      assert.equal(repeated.objects.filter((object: { kind: string; status: string }) => object.kind !== 'database' && object.status === 'skipped').length, files.size);
+      const restored = await runRestore(target, webdav);
+      assert.equal(restored.ok, true, JSON.stringify(restored.objects)); assert.equal(restored.derivedRestoredCount, files.size);
+      for (const [relative, content] of files) {
+        assert.equal(readFileSync(path.join(actualRoot, relative), 'utf8'), content);
+        assert.equal(readFileSync(path.join(target.appPaths.mineruCacheDir, relative), 'utf8'), content);
+      }
+    } finally { source.close(); target.close(); }
+  });
+}
 
 test('remote backup IDs cannot choose or remove the database restore staging directory', async () => {
   const source = createContext('paperquay-webdav-staging-source-');

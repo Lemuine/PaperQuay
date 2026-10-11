@@ -817,7 +817,6 @@ export default function LiteratureLibraryView({
       }
 
       const nextSettings = await updateLibrarySettings({
-        ...activeSettings,
         zoteroLocalDataDir: dataDir,
       });
       setSettings(nextSettings);
