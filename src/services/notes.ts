@@ -34,6 +34,14 @@ export async function listNotes(request: ListNotesRequest = {}): Promise<Note[]>
   }
 }
 
+export async function listAllNotes(request: Omit<ListNotesRequest, 'limit'> = {}): Promise<Note[]> {
+  try {
+    return await invoke<Note[]>('notes_list_all', { request });
+  } catch (error) {
+    throw new Error(toErrorMessage(error, '读取完整笔记列表失败'));
+  }
+}
+
 export async function getNote(id: string): Promise<Note | null> {
   try {
     return await invoke<Note | null>('notes_get', { id });

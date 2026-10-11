@@ -62,7 +62,7 @@ function createContext(overrides = {}) {
       },
     },
     noteStore: {
-      listNotes() {
+      listAllNotes() {
         return [
           {
             id: 'note-1',

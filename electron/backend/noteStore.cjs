@@ -607,6 +607,15 @@ function backlinkRowsByTargetId(db, noteIds) {
 }
 
 function hydrateNotes(db, rows) {
+  // Full-library reads can exceed SQLite's bound-parameter limit. Hydrate
+  // related records in batches without limiting the returned note count.
+  if (rows.length > 500) {
+    const notes = [];
+    for (let offset = 0; offset < rows.length; offset += 500) {
+      notes.push(...hydrateNotes(db, rows.slice(offset, offset + 500)));
+    }
+    return notes;
+  }
   const noteIds = rows.map((row) => row.id);
   const tagMap = relatedRowsByNoteId(db, 'note_tags', 'tag', noteIds);
   const paperLinkMap = relatedRowsByNoteId(db, 'note_paper_links', 'paper_id', noteIds);
@@ -835,13 +844,12 @@ function createNoteStore(appPaths) {
 
   let db = openDatabase(appPaths.notesDatabasePath);
 
-  function listNotes(request = {}) {
+  function queryNotes(request = {}, limit) {
     const paperId = cleanString(request.paperId);
     const linkedPaperId = cleanString(request.linkedPaperId);
     const type = cleanString(request.type);
     const tag = cleanString(request.tag).replace(/^#/, '');
     const search = cleanString(request.search).toLowerCase();
-    const limit = Math.max(1, Math.min(5000, Math.trunc(Number(request.limit)) || 500));
     const includeDeleted = request.includeDeleted === true;
     const where = [];
     const args = [];
@@ -876,10 +884,19 @@ function createNoteStore(appPaths) {
       FROM notes
       ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
       ORDER BY is_pinned DESC, updated_at DESC, created_at DESC
-      LIMIT ?
-    `).all(...args, limit);
+      ${limit === undefined ? '' : 'LIMIT ?'}
+    `).all(...args, ...(limit === undefined ? [] : [limit]));
 
     return hydrateNotes(db, rows);
+  }
+
+  function listNotes(request = {}) {
+    const limit = Math.max(1, Math.min(5000, Math.trunc(Number(request.limit)) || 500));
+    return queryNotes(request, limit);
+  }
+
+  function listAllNotes(request = {}) {
+    return queryNotes(request);
   }
 
   function listTags(request = {}) {
@@ -958,6 +975,7 @@ function createNoteStore(appPaths) {
       return backlinkRowsByTargetId(db, [noteId]).get(noteId) ?? [];
     },
     listNotes,
+    listAllNotes,
     listTags,
     updateNote,
     snapshotTo(targetPath) {

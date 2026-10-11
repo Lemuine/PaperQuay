@@ -15,7 +15,7 @@ import {
 import {
   createNote as createStoredNote,
   deleteNote as deleteStoredNote,
-  listNotes as listStoredNotes,
+  listAllNotes as listStoredNotes,
   type NoteMutationOptions,
   updateNote as updateStoredNote,
 } from '../../services/notes';
@@ -2373,7 +2373,7 @@ function DocumentReaderTab({
     setNotesError('');
 
     try {
-      const nextNotes = await listStoredNotes({ limit: 1000 });
+      const nextNotes = await listStoredNotes();
 
       setNotes(nextNotes);
       setReaderNoteExternalUpdate((current) =>

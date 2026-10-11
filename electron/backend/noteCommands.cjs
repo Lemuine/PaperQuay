@@ -6,6 +6,10 @@ function createNoteCommands(context) {
       return noteStore.listNotes(request);
     },
 
+    notes_list_all({ request = {} } = {}) {
+      return noteStore.listAllNotes(request);
+    },
+
     notes_get({ id }) {
       return noteStore.getNote({ id });
     },

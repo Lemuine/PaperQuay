@@ -17,7 +17,7 @@ import {
   type OpenPreferencesEventDetail,
 } from '../../app/appEvents';
 import { selectDirectory } from '../../services/desktop';
-import { listAllLibraryPapers, listLibraryPapers } from '../../services/library';
+import { listAllLibraryPapers } from '../../services/library';
 import { AppLocaleProvider } from '../../i18n/uiLanguage';
 import { getHomeTabTitle, HOME_TAB_ID, type ReaderTab, useTabsStore } from '../../stores/useTabsStore';
 import {
@@ -579,7 +579,7 @@ function Reader({ workspaceActive = true }: ReaderProps) {
 
     let cancelled = false;
 
-    void listLibraryPapers({ limit: 1000, sortBy: 'updatedAt', sortDirection: 'desc' })
+    void listAllLibraryPapers({ sortBy: 'updatedAt', sortDirection: 'desc' })
       .then((papers) => {
         if (!cancelled) {
           setNotePaperCandidates(papers);
@@ -683,7 +683,7 @@ function Reader({ workspaceActive = true }: ReaderProps) {
       const paperId = workspaceId.slice('native-library:'.length);
 
       try {
-        const papers = await listLibraryPapers({ limit: 1000, sortBy: 'updatedAt', sortDirection: 'desc' });
+        const papers = await listAllLibraryPapers({ sortBy: 'updatedAt', sortDirection: 'desc' });
         setNotePaperCandidates(papers);
         const paper = papers.find((item) => item.id === paperId);
         const workspaceItem = paper
@@ -749,7 +749,7 @@ function Reader({ workspaceActive = true }: ReaderProps) {
       }
 
       try {
-        const papers = await listLibraryPapers({ limit: 1000, sortBy: 'updatedAt', sortDirection: 'desc' });
+        const papers = await listAllLibraryPapers({ sortBy: 'updatedAt', sortDirection: 'desc' });
         setNotePaperCandidates(papers);
 
         const paper = papers.find((item) => item.id === normalizedPaperId);

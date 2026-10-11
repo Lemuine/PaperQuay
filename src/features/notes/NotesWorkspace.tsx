@@ -24,7 +24,7 @@ import {
   emitJumpToNoteAnchor,
   type NoteChangedEventDetail,
 } from '../../app/appEvents';
-import { listLibraryPapers } from '../../services/library';
+import { listAllLibraryPapers } from '../../services/library';
 import { useNotesStore } from '../../stores/useNotesStore';
 import { useTabsStore, type NoteTab } from '../../stores/useTabsStore';
 import type { LiteraturePaper } from '../../types/library';
@@ -848,7 +848,7 @@ export function NotesWorkspace() {
   useEffect(() => {
     void loadNotes();
     void refreshTags();
-    void listLibraryPapers({ limit: 1000, sortBy: 'updatedAt', sortDirection: 'desc' })
+    void listAllLibraryPapers({ sortBy: 'updatedAt', sortDirection: 'desc' })
       .then(setPapers)
       .catch(() => setPapers([]));
   }, [loadNotes, refreshTags]);

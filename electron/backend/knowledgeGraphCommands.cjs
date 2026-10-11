@@ -461,7 +461,7 @@ function createKnowledgeGraphSnapshot(context, request = {}) {
   const localNodeId = cleanString(request.localNodeId);
   const localDepth = normalizeLimit(request.localDepth, 1, 0, 4);
   const library = store.load();
-  const notes = includeNotes ? noteStore.listNotes({ limit: 5000 }) : [];
+  const notes = includeNotes ? noteStore.listAllNotes() : [];
   const nodes = new Map();
   const edges = new Map();
   const paperIds = new Set(library.papers.map((paper) => paper.id));
@@ -860,7 +860,7 @@ async function suggestAiRelations(context, request = {}, options = {}) {
     localDepth: cleanString(request.focusNodeId) ? normalizeLimit(request.localDepth, 2, 1, 4) : 0,
   });
   const library = context.store.load();
-  const notes = context.noteStore.listNotes({ limit: 5000 });
+  const notes = context.noteStore.listAllNotes();
   const focusNodeId = cleanString(request.focusNodeId);
   const nodes = snapshot.nodes
     .filter((node) => node.type === 'paper' || node.type === 'note')

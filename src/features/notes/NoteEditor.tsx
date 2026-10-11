@@ -657,7 +657,7 @@ export function NoteEditor({
   });
   const editorSourceIdRef = useRef(editorSourceId ?? createNoteEditorSourceId());
   const lastSavedSignatureRef = useRef('');
-  const latestCandidatesRef = useRef({ notes, tags, papers });
+  const latestCandidatesRef = useRef({ notes, tags, papers, onPaperClick });
   const latestNoteRef = useRef<Note | null>(note);
   const externalNoteRef = useRef<Note | null>(null);
   const tagEditorRef = useRef<HTMLDivElement | null>(null);
@@ -678,8 +678,8 @@ export function NoteEditor({
   }, [editorSourceId]);
 
   useEffect(() => {
-    latestCandidatesRef.current = { notes, tags, papers };
-  }, [notes, papers, tags]);
+    latestCandidatesRef.current = { notes, tags, papers, onPaperClick };
+  }, [notes, papers, tags, onPaperClick]);
 
   useEffect(() => {
     if (!tagEditorOpen) return undefined;
@@ -804,7 +804,7 @@ export function NoteEditor({
             description: paper.authors.map((author) => author.name).join(', ') || paper.year || paper.id,
           }));
       },
-      onClick: (paperId) => onPaperClick?.(paperId),
+      onClick: (paperId) => latestCandidatesRef.current.onPaperClick?.(paperId),
     }),
   ], [jumpToAnchorId, note?.id, onOpenNote, onPaperClick, onTagClick]);
 
