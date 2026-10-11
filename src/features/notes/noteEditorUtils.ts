@@ -39,6 +39,17 @@ export interface NoteEditorDraft {
 
 const noteEditorDrafts = new Map<string, NoteEditorDraft>();
 
+export function canPersistNoteEditorDraft(
+  noteId: string,
+  loadedNoteId: string | null,
+  renderedSignature: string,
+  pendingHydrationSignature: string | null,
+): boolean {
+  // Hydration effects may update refs before the loaded fields have rendered.
+  return loadedNoteId === noteId &&
+    (pendingHydrationSignature === null || renderedSignature === pendingHydrationSignature);
+}
+
 function cloneJsonValue<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
@@ -94,6 +105,25 @@ export function clearNoteEditorDraft(
   noteId: string,
 ): void {
   noteEditorDrafts.delete(buildNoteEditorDraftKey(editorSourceId, noteId));
+}
+
+export function acknowledgeNoteEditorDraftSave(
+  editorSourceId: string,
+  saved: { noteId: string; updatedAt: number | null; submittedSignature: string; savedSignature: string },
+): void {
+  const key = buildNoteEditorDraftKey(editorSourceId, saved.noteId);
+  const draft = noteEditorDrafts.get(key);
+  if (!draft) return;
+  if (draft.draftSignature === saved.submittedSignature || draft.draftSignature === saved.savedSignature) {
+    noteEditorDrafts.delete(key);
+    return;
+  }
+  // Edits made while saving remain drafts, now based on the acknowledged version.
+  noteEditorDrafts.set(key, {
+    ...draft,
+    baseUpdatedAt: saved.updatedAt,
+    savedSignature: saved.savedSignature,
+  });
 }
 
 export function paragraphNode(text = ''): JSONContent {

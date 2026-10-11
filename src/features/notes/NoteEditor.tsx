@@ -102,6 +102,8 @@ import {
 } from './noteEditorBlockUtils.ts';
 import { normalizeTagInput, noteAnchorBlockFromAnchor } from './noteUtils';
 import {
+  acknowledgeNoteEditorDraftSave,
+  canPersistNoteEditorDraft,
   componentBlockNode,
   clearNoteEditorDraft,
   getImageFilesFromDataTransfer,
@@ -647,6 +649,7 @@ export function NoteEditor({
   const [tagEditorOpen, setTagEditorOpen] = useState(false);
   const [color, setColor] = useState('#fef3c7');
   const [revision, setRevision] = useState(0);
+  const [saveError, setSaveError] = useState('');
   const [externalUpdateAvailable, setExternalUpdateAvailable] = useState(false);
   const [editorContextMenu, setEditorContextMenu] = useState<NoteEditorContextMenuState | null>(null);
   const snapshotRef = useRef<EditorSnapshot>({
@@ -663,6 +666,7 @@ export function NoteEditor({
   const tagEditorRef = useRef<HTMLDivElement | null>(null);
   const editorBodyRef = useRef<HTMLDivElement | null>(null);
   const loadedNoteIdRef = useRef<string | null>(null);
+  const loadedEditorRef = useRef<Editor | null>(null);
   const appliedUpdatedAtRef = useRef<number | null>(note?.updatedAt ?? null);
   const dirtyRef = useRef(false);
   const externalUpdateAvailableRef = useRef(false);
@@ -670,6 +674,7 @@ export function NoteEditor({
   const lastSelectionRef = useRef<{ from: number; to: number } | null>(null);
   const handledAnchorInsertRequestRef = useRef('');
   const pendingAnchorsRef = useRef(new Map<string, NoteAnchor>());
+  const pendingHydrationSignatureRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (editorSourceId && editorSourceIdRef.current !== editorSourceId) {
@@ -1146,6 +1151,8 @@ export function NoteEditor({
     () => signature({ title, tagText, color, snapshot: snapshotRef.current }),
     [color, revision, tagText, title],
   );
+  const latestSignatureRef = useRef(currentSignature);
+  latestSignatureRef.current = currentSignature;
   const dirty = Boolean(note && currentSignature !== lastSavedSignatureRef.current);
   const currentTags = useMemo(() => normalizeTagInput(tagText), [tagText]);
 
@@ -1253,7 +1260,8 @@ export function NoteEditor({
       snapshot: incomingSnapshot,
     });
     const noteId = note?.id ?? null;
-    const sameNote = loadedNoteIdRef.current === noteId;
+    // A recreated Tiptap editor must receive the draft even for the same note.
+    const sameNote = loadedNoteIdRef.current === noteId && loadedEditorRef.current === editor;
     const forceApplyIncoming = forceApplyIncomingRef.current;
     forceApplyIncomingRef.current = false;
     const incomingUpdatedAt = note?.updatedAt ?? 0;
@@ -1274,6 +1282,8 @@ export function NoteEditor({
       (!sameNote || !dirtyRef.current || localSignature === incomingSignature);
 
     if (canRestoreDraft) {
+      if (!sameNote) setSaveError('');
+      pendingHydrationSignatureRef.current = draft.draftSignature;
       setTitle(draft.title);
       setTagText(draft.tagText);
       setColor(draft.color);
@@ -1285,6 +1295,7 @@ export function NoteEditor({
       snapshotRef.current = draft.snapshot;
       pendingAnchorsRef.current = new Map(draft.pendingAnchors.map((anchor) => [anchor.id, anchor]));
       loadedNoteIdRef.current = noteId;
+      loadedEditorRef.current = editor;
       appliedUpdatedAtRef.current = note?.updatedAt ?? null;
       lastSavedSignatureRef.current = incomingSignature;
       externalNoteRef.current = null;
@@ -1319,6 +1330,8 @@ export function NoteEditor({
     }
 
     if (!sameNote || !dirtyRef.current || forceApplyIncoming) {
+      if (!sameNote || forceApplyIncoming) setSaveError('');
+      pendingHydrationSignatureRef.current = incomingSignature;
       setTitle(nextTitle);
       setTagText(nextTagText);
       setColor(nextColor);
@@ -1341,6 +1354,7 @@ export function NoteEditor({
     }
 
     loadedNoteIdRef.current = noteId;
+    loadedEditorRef.current = editor;
     appliedUpdatedAtRef.current = note?.updatedAt ?? null;
     lastSavedSignatureRef.current = incomingSignature;
     if (forceApplyIncoming || !sameNote) {
@@ -1351,9 +1365,12 @@ export function NoteEditor({
   }, [color, editor, note, note?.id, note?.updatedAt, setExternalUpdateState, tagText, title]);
 
   useEffect(() => {
-    if (!note || loadedNoteIdRef.current !== note.id || !lastSavedSignatureRef.current) {
+    if (!note || !lastSavedSignatureRef.current || !canPersistNoteEditorDraft(
+      note.id, loadedNoteIdRef.current, currentSignature, pendingHydrationSignatureRef.current,
+    )) {
       return;
     }
+    pendingHydrationSignatureRef.current = null;
 
     if (!dirty) {
       clearNoteEditorDraft(editorSourceIdRef.current, note.id);
@@ -1407,48 +1424,77 @@ export function NoteEditor({
   }, [editor, note, onPendingAnchorInsertHandled, pendingAnchorInsert]);
 
   const save = useCallback(async () => {
-    if (!note || saving) return;
+    if (!note || saving || !canPersistNoteEditorDraft(
+      note.id, loadedNoteIdRef.current, latestSignatureRef.current, pendingHydrationSignatureRef.current,
+    )) return;
+    setSaveError('');
+    const saveSourceId = editorSourceIdRef.current;
 
     const snapshot = editor ? snapshotFromEditor(editor) : snapshotRef.current;
     snapshotRef.current = snapshot;
     const contentText = snapshot.contentText || collectText(snapshot.contentJson);
     const nextTitle = title.trim() || titleFromNoteContent(contentText);
     const tags = normalizeTagInput(tagText);
+    const nextTagText = tags.join(', ');
+    const submittedSignature = signature({ title, tagText, color, snapshot });
+    const savedSignature = signature({ title: nextTitle, tagText: nextTagText, color, snapshot });
     const contentAnchorIds = extractNoteAnchorIds(snapshot.contentJson);
-    const pendingAnchors = Array.from(pendingAnchorsRef.current.values()).filter((anchor) =>
+    const pendingAnchorsAtSave = Array.from(pendingAnchorsRef.current.values());
+    const pendingAnchors = pendingAnchorsAtSave.filter((anchor) =>
       contentAnchorIds.has(anchor.id),
     );
     const nextAnchors = mergeAnchors(note.anchors, pendingAnchors).filter((anchor) =>
       contentAnchorIds.has(anchor.id),
     );
 
-    const updatedNote = await onUpdate(
-      note.id,
-      {
-        title: nextTitle,
-        color,
-        tags,
-        content: contentText,
-        contentJson: snapshot.contentJson,
-        contentHtml: snapshot.contentHtml,
-        contentText,
-        wordCount: snapshot.wordCount,
-        anchors: nextAnchors,
-        pdfLocation: nextAnchors[0]?.pdfLocation ?? null,
-        linkedNoteTitles: extractWikiTitles(contentText),
-        linkedPaperIds: extractPaperRefs(contentText),
-      },
-      { sourceId: editorSourceIdRef.current },
-    );
-
-    for (const anchorId of Array.from(pendingAnchorsRef.current.keys())) {
-      if (!contentAnchorIds.has(anchorId)) pendingAnchorsRef.current.delete(anchorId);
+    let updatedNote: Note | void;
+    try {
+      updatedNote = await onUpdate(
+        note.id,
+        {
+          title: nextTitle,
+          color,
+          tags,
+          content: contentText,
+          contentJson: snapshot.contentJson,
+          contentHtml: snapshot.contentHtml,
+          contentText,
+          wordCount: snapshot.wordCount,
+          anchors: nextAnchors,
+          pdfLocation: nextAnchors[0]?.pdfLocation ?? null,
+          linkedNoteTitles: extractWikiTitles(contentText),
+          linkedPaperIds: extractPaperRefs(contentText),
+        },
+        { sourceId: saveSourceId },
+      );
+    } catch (error) {
+      if (loadedNoteIdRef.current === note.id && loadedEditorRef.current === editor) {
+        setSaveError(error instanceof Error ? error.message : '保存笔记失败，请重试');
+      }
+      return;
     }
-    appliedUpdatedAtRef.current = updatedNote?.updatedAt ?? note.updatedAt ?? Date.now();
+    if (!updatedNote) {
+      if (loadedNoteIdRef.current === note.id && loadedEditorRef.current === editor) {
+        setSaveError('保存笔记失败，请重试');
+      }
+      return;
+    }
+
+    const savedUpdatedAt = updatedNote?.updatedAt ?? note.updatedAt ?? Date.now();
+    acknowledgeNoteEditorDraftSave(saveSourceId, {
+      noteId: note.id, updatedAt: savedUpdatedAt, submittedSignature, savedSignature,
+    });
+    // A completion for a previous editor must not change the newly opened note.
+    if (loadedNoteIdRef.current !== note.id || loadedEditorRef.current !== editor || editorSourceIdRef.current !== saveSourceId) return;
+
+    for (const anchor of pendingAnchorsAtSave) pendingAnchorsRef.current.delete(anchor.id);
+    appliedUpdatedAtRef.current = savedUpdatedAt;
     setExternalUpdateState(false, note.id);
-    lastSavedSignatureRef.current = signature({ title: nextTitle, tagText, color, snapshot });
-    clearNoteEditorDraft(editorSourceIdRef.current, note.id);
-    setTitle(nextTitle);
+    lastSavedSignatureRef.current = savedSignature;
+    if (latestSignatureRef.current === submittedSignature) {
+      setTitle(nextTitle);
+      setTagText(nextTagText);
+    }
     setRevision((value) => value + 1);
   }, [color, editor, note, onUpdate, saving, setExternalUpdateState, tagText, title]);
 
@@ -1463,7 +1509,10 @@ export function NoteEditor({
     const nextTitle = incomingNote.title ?? '';
     const nextTagText = incomingNote.tags.join(', ');
     const nextColor = incomingNote.color ?? '#fef3c7';
+    const incomingSignature = signature({ title: nextTitle, tagText: nextTagText, color: nextColor, snapshot: incomingSnapshot });
 
+    pendingHydrationSignatureRef.current = incomingSignature;
+    setSaveError('');
     setTitle(nextTitle);
     setTagText(nextTagText);
     setColor(nextColor);
@@ -1472,13 +1521,9 @@ export function NoteEditor({
     }
     snapshotRef.current = incomingSnapshot;
     loadedNoteIdRef.current = incomingNote.id;
+    loadedEditorRef.current = editor;
     appliedUpdatedAtRef.current = incomingNote.updatedAt ?? null;
-    lastSavedSignatureRef.current = signature({
-      title: nextTitle,
-      tagText: nextTagText,
-      color: nextColor,
-      snapshot: incomingSnapshot,
-    });
+    lastSavedSignatureRef.current = incomingSignature;
     pendingAnchorsRef.current.clear();
     externalNoteRef.current = null;
     clearNoteEditorDraft(editorSourceIdRef.current, incomingNote.id);
@@ -1676,6 +1721,12 @@ export function NoteEditor({
           </div>
         </div>
       </div>
+
+      {saveError ? (
+        <div role="alert" className="border-b border-[var(--pq-border)] bg-[var(--pq-error-bg)] px-4 py-2 text-xs text-[var(--pq-error)]">
+          {saveError}
+        </div>
+      ) : null}
 
       {externalUpdateAvailable ? (
         <div className="flex items-start gap-3 border-b border-[var(--pq-border)] bg-[var(--pq-accent-bg)] px-4 py-2.5 text-xs text-[var(--pq-text)]">

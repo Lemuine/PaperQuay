@@ -2586,7 +2586,7 @@ function DocumentReaderTab({
         sortReaderNotes(current.map((note) => (note.id === updated.id ? updated : note))),
       );
       setReaderNoteExternalUpdate((current) => (current?.id === updated.id ? null : current));
-      setActiveNoteId(updated.id);
+      setActiveNoteId((current) => current ?? updated.id);
       setStatusMessage(lRef.current('已保存笔记', 'Saved note'));
     } catch (nextError) {
       setNotesError(
