@@ -6,7 +6,7 @@ import {
 } from './desktop';
 import type { ReaderConfigFile } from '../types/reader';
 import { createDebouncedSave } from './debouncedSave';
-import { getLibrarySettings, updateLibrarySettings } from './library';
+import { flushLibrarySettingsWrites, getLibrarySettings, updateLibrarySettings } from './library';
 import type { LibrarySettings } from '../types/library';
 
 interface ScheduledConfig {
@@ -49,8 +49,9 @@ export function scheduleReaderConfigWrite(
   scheduledWrites.schedule({ content: JSON.stringify(config, null, 2), zoteroLocalDataDir: config.zoteroLocalDataDir?.trim(), paths, onSaved, onError });
 }
 
-export function flushReaderConfigWrites(): Promise<void> {
-  return scheduledWrites.flush();
+export async function flushReaderConfigWrites(): Promise<void> {
+  await scheduledWrites.flush();
+  await flushLibrarySettingsWrites();
 }
 
 export async function readReaderConfigFile(

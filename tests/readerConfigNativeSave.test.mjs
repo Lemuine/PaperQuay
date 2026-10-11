@@ -19,11 +19,23 @@ function loadService(library, write) {
   }
   return load('readerConfig.ts', {
     './debouncedSave': load('debouncedSave.ts', {}),
-    './library': library,
+    './library': { flushLibrarySettingsWrites: async () => {}, ...library },
     './desktop': { writeLocalTextFile: write },
   });
 }
 const paths = { configPath: 'fixture-config.json' };
+
+test('closing also waits for pending native library settings outside the config file', async () => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  let finished = false;
+  const service = loadService({ flushLibrarySettingsWrites: () => gate }, async () => {});
+  const closing = service.flushReaderConfigWrites().then(() => { finished = true; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(finished, false);
+  release(); await closing;
+  assert.equal(finished, true);
+});
 
 test('restart flush waits for native Zotero settings and then the config file', async () => {
   let release;

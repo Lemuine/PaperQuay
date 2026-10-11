@@ -63,6 +63,9 @@ export function useReaderSettings({
   setStatusMessage,
 }: UseReaderSettingsOptions) {
   const legacyModelPresetMigrationDoneRef = useRef(false);
+  const nativeSettingsRequestIdRef = useRef(0);
+  const nativeSettingsPendingRef = useRef(false);
+  const nativeSettingsFailedKeysRef = useRef(new Set<string>());
 
   const [settings, setSettings] = useState<ReaderSettings>(loadSettings);
   const [readerSecrets, setReaderSecrets] = useState<ReaderSecrets>(DEFAULT_SECRETS);
@@ -107,13 +110,16 @@ export function useReaderSettings({
       patch: Partial<LibrarySettings> | LibrarySettings,
       source = 'reader-preferences',
     ): Promise<LibrarySettings | null> => {
+      const requestId = ++nativeSettingsRequestIdRef.current;
+      nativeSettingsPendingRef.current = true;
       try {
         const base = librarySettings ?? await getLibrarySettings();
-        const nextSettings = await updateLibrarySettings({
-          ...base,
-          ...patch,
-        });
+        setLibrarySettings((current) => ({ ...(current ?? base), ...patch }));
+        if (patch.zoteroLocalDataDir !== undefined) setZoteroLocalDataDir(patch.zoteroLocalDataDir.trim());
+        const nextSettings = await updateLibrarySettings(patch);
+        for (const key of Object.keys(patch)) nativeSettingsFailedKeysRef.current.delete(key);
 
+        if (requestId !== nativeSettingsRequestIdRef.current) return nextSettings;
         setLibrarySettings(nextSettings);
 
         if (Object.prototype.hasOwnProperty.call(patch, 'zoteroLocalDataDir')) {
@@ -121,8 +127,13 @@ export function useReaderSettings({
         }
 
         emitLibrarySettingsUpdated(nextSettings, source);
+        if (nativeSettingsFailedKeysRef.current.size === 0) {
+          setError('');
+          setStatusMessage(l('文库设置已保存', 'Library settings saved'));
+        }
         return nextSettings;
       } catch (nextError) {
+        for (const key of Object.keys(patch)) nativeSettingsFailedKeysRef.current.add(key);
         const message =
           nextError instanceof Error
             ? nextError.message
@@ -130,7 +141,17 @@ export function useReaderSettings({
 
         setError(message);
         setStatusMessage(message);
+        if (requestId === nativeSettingsRequestIdRef.current) {
+          const persisted = await getLibrarySettings().catch(() => null);
+          if (persisted && requestId === nativeSettingsRequestIdRef.current) {
+            setLibrarySettings(persisted);
+            setZoteroLocalDataDir(persisted.zoteroLocalDataDir.trim());
+            emitLibrarySettingsUpdated(persisted, source);
+          }
+        }
         return null;
+      } finally {
+        if (requestId === nativeSettingsRequestIdRef.current) nativeSettingsPendingRef.current = false;
       }
     },
     [l, librarySettings, setError, setStatusMessage],
@@ -341,10 +362,7 @@ export function useReaderSettings({
         setZoteroLocalDataDir(resolvedZoteroDir);
         setLibrarySettings(nativeLibrarySettings);
         if (nativeLibrarySettings && configZoteroDir && !nativeZoteroDir) {
-          const syncedSettings = await updateLibrarySettings({
-            ...nativeLibrarySettings,
-            zoteroLocalDataDir: configZoteroDir,
-          });
+          const syncedSettings = await updateLibrarySettings({ zoteroLocalDataDir: configZoteroDir });
 
           setLibrarySettings(syncedSettings);
           emitLibrarySettingsUpdated(syncedSettings, 'reader-config-hydration');
@@ -412,7 +430,7 @@ export function useReaderSettings({
     };
     scheduleReaderConfigWrite(nextConfig, appDefaultPaths,
       (nativeSettings) => {
-        if (nativeSettings) {
+        if (nativeSettings && !nativeSettingsPendingRef.current) {
           setLibrarySettings(nativeSettings);
           emitLibrarySettingsUpdated(nativeSettings, 'reader-config-save');
         }

@@ -341,6 +341,15 @@ export function ReaderPreferencesContent({
 
       {activeSection === 'library' ? (
         <>
+          {errorMessage ? (
+            <div role="alert" className="rounded-[var(--pq-radius-md)] border border-[var(--pq-error-bg)] bg-[var(--pq-error-bg)] px-4 py-3 text-sm text-[var(--pq-error)]">
+              {errorMessage}
+            </div>
+          ) : statusMessage ? (
+            <div role="status" className="rounded-[var(--pq-radius-md)] border border-[var(--pq-border)] bg-[var(--pq-surface-1)] px-4 py-3 text-sm text-[var(--pq-text-muted)]">
+              {statusMessage}
+            </div>
+          ) : null}
           <LibraryLocationPanel />
           <SettingsField
             label={l('默认文献存储文件夹', 'Default paper storage folder')}

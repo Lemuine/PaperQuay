@@ -1,5 +1,6 @@
 import { invoke } from '../platform/electron/core';
 import { listen } from '../platform/electron/event';
+import { createSerialSettingsWrites } from './serialSettingsWrites';
 import type {
   AssignPaperCategoryRequest,
   CreateCategoryRequest,
@@ -26,6 +27,13 @@ import type {
 } from '../types/library';
 
 export const LIBRARY_REFERENCE_PROGRESS_EVENT = 'paperquay://library-reference-progress';
+const settingsWrites = createSerialSettingsWrites<Partial<LibrarySettings>, LibrarySettings>(
+  (settings) => invoke<LibrarySettings>('library_update_settings', { settings }),
+);
+
+export function flushLibrarySettingsWrites(): Promise<void> {
+  return settingsWrites.flush();
+}
 
 function toErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message) {
@@ -67,7 +75,7 @@ export async function updateLibrarySettings(
   settings: Partial<LibrarySettings>,
 ): Promise<LibrarySettings> {
   try {
-    return await invoke<LibrarySettings>('library_update_settings', { settings });
+    return await settingsWrites.update({ ...settings });
   } catch (error) {
     throw new Error(toErrorMessage(error, '保存文献库设置失败'));
   }
@@ -161,6 +169,7 @@ export async function importPdfsToLibrary(
   request: ImportPdfRequest,
 ): Promise<ImportedPdfResult[]> {
   try {
+    await flushLibrarySettingsWrites();
     return await invoke<ImportedPdfResult[]>('library_import_pdfs', { request });
   } catch (error) {
     throw new Error(toErrorMessage(error, '导入 PDF 失败'));
