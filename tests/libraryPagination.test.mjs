@@ -42,6 +42,19 @@ test('page totals use the same category, search and sort filters as rows', async
   assert.equal(result.papers.at(-1).id, 'paper-1020');
 });
 
+test('whole-library operations receive every paper while the legacy list remains bounded', async () => {
+  const { commands, library, saves } = fixture();
+  const original = structuredClone(library);
+  const bounded = await commands.library_list_papers({ request: { limit: 1105 } });
+  const all = await commands.library_list_all_papers({ request: { sortBy: 'manual', sortDirection: 'asc' } });
+  assert.equal(bounded.length, 1000);
+  assert.deepEqual(all.map(paper => paper.id), Array.from({ length: 1105 }, (_, i) => `paper-${i}`));
+  const reversed = await commands.library_list_all_papers({ request: { sortBy: 'importedAt', sortDirection: 'desc' } });
+  assert.deepEqual(reversed.map(paper => paper.id), all.map(paper => paper.id).reverse());
+  assert.deepEqual(library, original);
+  assert.equal(saves(), 0);
+});
+
 test('empty and out-of-range pages have valid bounds; shrinking results clamp to the last page', async () => {
   const { commands, library } = fixture(201);
   assert.equal((await commands.library_list_papers_page({ request: { page: 999 } })).page, 2);

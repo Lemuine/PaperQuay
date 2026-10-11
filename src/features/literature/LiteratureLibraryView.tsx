@@ -25,7 +25,7 @@ import {
   importPdfsToLibrary,
   initializeLiteratureLibrary,
   listLibraryCategories,
-  listLibraryPapers,
+  listAllLibraryPapers,
   listLibraryPapersPage,
   moveLibraryCategory,
   reorderLibraryPapers,
@@ -1297,10 +1297,9 @@ export default function LiteratureLibraryView({
     setError('');
 
     try {
-      const allPapers = await listLibraryPapers({
+      const allPapers = await listAllLibraryPapers({
         sortBy: 'manual',
         sortDirection: 'asc',
-        limit: 1000,
       });
 
       if (allPapers.length === 0) {
