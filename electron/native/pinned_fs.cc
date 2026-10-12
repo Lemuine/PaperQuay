@@ -144,8 +144,7 @@ static void posixError(const char* operation) {
   throw Failure(code, std::string(operation) + " failed: " + strerror(saved));
 }
 struct Info { bool directory; bool reparse; uint64_t size; uint64_t device; uint64_t inode; uint64_t links; uint64_t modified; };
-static Info info(Handle handle) {
-  struct stat value{}; if (fstat(handle, &value)) posixError("File information");
+static Info info(const struct stat& value) {
   if (!S_ISDIR(value.st_mode) && !S_ISREG(value.st_mode)) unsafe("Only regular files and directories are supported.");
 #ifdef __APPLE__
   auto modified = value.st_mtimespec;
@@ -154,6 +153,18 @@ static Info info(Handle handle) {
 #endif
   return {bool(S_ISDIR(value.st_mode)), bool(S_ISLNK(value.st_mode)), uint64_t(value.st_size), uint64_t(value.st_dev), uint64_t(value.st_ino), uint64_t(value.st_nlink),
     uint64_t(modified.tv_sec) * 1000000000ULL + uint64_t(modified.tv_nsec)};
+}
+static Info info(Handle handle) {
+  struct stat value{}; if (fstat(handle, &value)) posixError("File information");
+  return info(value);
+}
+static int directoryFlags(bool traversalOnly) {
+#ifdef __APPLE__
+  const int search = O_SEARCH;
+#else
+  const int search = O_PATH;
+#endif
+  return (traversalOnly ? search : O_RDONLY) | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC;
 }
 #endif
 
@@ -215,13 +226,13 @@ static Name join(const Name& parent, const Name& child) {
   return parent + (parent.back() == '/' ? "" : "/") + child;
 #endif
 }
-static Owned openRoot(const Parsed& value) {
+static Owned openRoot(const Parsed& value, bool traversalOnly = false) {
 #ifdef _WIN32
-  Owned root(CreateFileW(value.root.c_str(), FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+  Owned root(CreateFileW(value.root.c_str(), (traversalOnly ? FILE_TRAVERSE : FILE_LIST_DIRECTORY) | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
     FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
   if (root.value == Invalid) winError(GetLastError(), "Open filesystem root");
 #else
-  Owned root(open(value.root.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
+  Owned root(open(value.root.c_str(), directoryFlags(traversalOnly)));
   if (root.value == Invalid) posixError("Open filesystem root");
 #endif
   auto details = info(root.value); if (!details.directory || details.reparse) unsafe("Linked filesystem root is not supported.");
@@ -229,17 +240,18 @@ static Owned openRoot(const Parsed& value) {
 }
 struct Parent {
   Parsed parsed; std::vector<Owned> chain;
-  Parent(const std::string& file, bool create, bool includeLeaf = false) : parsed(parse(file)) {
+  Parent(const std::string& file, bool create, bool includeLeaf = false, bool metadataListing = false) : parsed(parse(file)) {
     if (!includeLeaf && parsed.parts.empty()) unsafe("A file leaf is required.");
-    chain.emplace_back(openRoot(parsed));
     const size_t count = parsed.parts.size() - (includeLeaf ? 0 : 1);
+    chain.emplace_back(openRoot(parsed, metadataListing && count > 0));
     for (size_t i = 0; i < count; ++i) {
       const auto& name = parsed.parts[i];
+      const bool traversalOnly = metadataListing && i + 1 < count;
 #ifdef _WIN32
-      Owned child(relativeOpen(handle(), name, FILE_LIST_DIRECTORY, create ? 3 /* OPEN_IF */ : 1 /* OPEN */, true));
+      Owned child(relativeOpen(handle(), name, traversalOnly ? FILE_TRAVERSE : FILE_LIST_DIRECTORY, create ? 3 /* OPEN_IF */ : 1 /* OPEN */, true));
 #else
       if (create && mkdirat(handle(), name.c_str(), 0777) && errno != EEXIST) posixError("Create directory");
-      Owned child(openat(handle(), name.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
+      Owned child(openat(handle(), name.c_str(), directoryFlags(traversalOnly)));
       if (child.value == Invalid) {
         // O_DIRECTORY | O_NOFOLLOW reports a symlink as ENOTDIR on POSIX.
         // Do not let callers classify an unsafe parent as a missing file.
@@ -312,10 +324,12 @@ struct Request {
   bool exclusive = false, singleLink = false; unsigned mode = 0666;
   uint32_t maxBytes = 0;
 };
+struct ListedFile { std::string name; uint64_t size; double modifiedAtMs; };
 struct Result {
   Info stat{}; bool exists = true; int fd = -1;
   std::vector<char> bytes; std::string actual, linkPath, target, suffix;
   std::vector<std::string> entries;
+  std::vector<ListedFile> files;
 };
 static void atomicWrite(Parent& parent, const Request& request, Handle source, Result& output) {
   // Random single-component names are supplied by node:crypto. Windows retains
@@ -373,7 +387,14 @@ static void atomicWrite(Parent& parent, const Request& request, Handle source, R
   }
 }
 static Result inspect(const std::string& file) {
-  auto parsed = parse(file); std::vector<Owned> chain; chain.emplace_back(openRoot(parsed));
+  auto parsed = parse(file); std::vector<Owned> chain;
+  // Inspection is metadata-only, like Windows FILE_READ_ATTRIBUTES. It must
+  // not require listing ancestors or opening a regular file's contents.
+#ifdef _WIN32
+  chain.emplace_back(openRoot(parsed));
+#else
+  chain.emplace_back(openRoot(parsed, true));
+#endif
   Name current = parsed.root; Result output;
   for (size_t i = 0; i < parsed.parts.size(); ++i) {
     auto next = join(current, parsed.parts[i]);
@@ -409,8 +430,15 @@ static Result inspect(const std::string& file) {
       for (++i; i < parsed.parts.size(); ++i) output.suffix = output.suffix.empty() ? parsed.parts[i] : output.suffix + "/" + parsed.parts[i];
       return output;
     }
-    Owned child(openat(chain.back().value, parsed.parts[i].c_str(), O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC));
-    if (child.value == Invalid) posixError("Inspect path");
+    if (i + 1 == parsed.parts.size()) {
+      output.actual = next; output.stat = info(st); return output;
+    }
+    if (!S_ISDIR(st.st_mode)) throw Failure("ENOTDIR", "Path parent is not a directory.");
+    Owned child(openat(chain.back().value, parsed.parts[i].c_str(), directoryFlags(true)));
+    if (child.value == Invalid) {
+      if (errno == ENOTDIR || errno == ELOOP) unsafe("Approved path changed: linked directory is not supported.");
+      posixError("Inspect path");
+    }
     auto details = info(child.value);
     if (i + 1 != parsed.parts.size() && !details.directory) throw Failure("ENOTDIR", "Path parent is not a directory.");
     current = next; output.stat = details; chain.emplace_back(std::move(child));
@@ -422,8 +450,9 @@ static Result execute(const Request& request) {
   Result output;
   if (request.operation == "inspect") return inspect(request.path);
   if (request.operation == "mkdir") { Parent directory(request.path, true, true); output.stat = info(directory.handle()); return output; }
-  if (request.operation == "list") {
-    Parent directory(request.path, false, true);
+  if (request.operation == "list" || request.operation == "listFiles") {
+    const bool filesOnly = request.operation == "listFiles";
+    Parent directory(request.path, false, true, filesOnly);
 #ifdef _WIN32
     std::vector<unsigned char> buffer(64 * 1024);
     for (;;) {
@@ -434,7 +463,13 @@ static Result execute(const Request& request) {
       auto* entry = reinterpret_cast<FILE_ID_BOTH_DIR_INFO*>(buffer.data());
       for (;;) {
         Name name(entry->FileName, entry->FileNameLength / sizeof(wchar_t));
-        if (name != L"." && name != L"..") output.entries.push_back(utf8(name));
+        if (name != L"." && name != L"..") {
+          if (!filesOnly) output.entries.push_back(utf8(name));
+          else if (!(entry->FileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT))) {
+            output.files.push_back({utf8(name), uint64_t(entry->EndOfFile.QuadPart),
+              double(entry->LastWriteTime.QuadPart - 116444736000000000LL) / 10000.0});
+          }
+        }
         if (!entry->NextEntryOffset) break;
         entry = reinterpret_cast<FILE_ID_BOTH_DIR_INFO*>(reinterpret_cast<unsigned char*>(entry) + entry->NextEntryOffset);
       }
@@ -449,7 +484,23 @@ static Result execute(const Request& request) {
       errno = 0; auto* entry = readdir(listing.get());
       if (!entry) { if (errno) posixError("List directory"); break; }
       std::string name(entry->d_name);
-      if (name != "." && name != "..") output.entries.push_back(name);
+      if (name == "." || name == "..") continue;
+      if (!filesOnly) { output.entries.push_back(name); continue; }
+      // A single name relative to the retained directory cannot follow a parent
+      // replacement; NOFOLLOW also excludes leaf links without opening bytes.
+      struct stat details{};
+      if (fstatat(directory.handle(), name.c_str(), &details, AT_SYMLINK_NOFOLLOW)) {
+        if (errno == ENOENT) continue; // An entry removed during enumeration.
+        posixError("List file metadata");
+      }
+      if (!S_ISREG(details.st_mode)) continue;
+#ifdef __APPLE__
+      const auto modified = details.st_mtimespec;
+#else
+      const auto modified = details.st_mtim;
+#endif
+      output.files.push_back({name, uint64_t(details.st_size),
+        double(modified.tv_sec) * 1000.0 + double(modified.tv_nsec) / 1000000.0});
     }
 #endif
     return output;
@@ -525,6 +576,16 @@ static napi_value resultValue(napi_env env, const Result& output) {
   napi_value entries; napi_create_array_with_length(env, output.entries.size(), &entries);
   for (size_t i = 0; i < output.entries.size(); ++i) napi_set_element(env, entries, (uint32_t)i, string(env, output.entries[i]));
   put("entries", entries);
+  napi_value files; napi_create_array_with_length(env, output.files.size(), &files);
+  for (size_t i = 0; i < output.files.size(); ++i) {
+    const auto& item = output.files[i];
+    napi_value file, size, modified; napi_create_object(env, &file);
+    napi_set_named_property(env, file, "name", string(env, item.name));
+    napi_create_double(env, double(item.size), &size); napi_set_named_property(env, file, "size", size);
+    napi_create_double(env, item.modifiedAtMs, &modified); napi_set_named_property(env, file, "modifiedAtMs", modified);
+    napi_set_element(env, files, uint32_t(i), file);
+  }
+  put("files", files);
   return object;
 }
 static napi_value errorValue(napi_env env, const std::string& code, const std::string& message) {

@@ -11,6 +11,7 @@ module.exports = {
   mkdir: (filePath) => binding.run(request('mkdir', filePath)),
   mkdirSync: (filePath) => binding.runSync(request('mkdir', filePath)),
   list: async (filePath) => (await binding.run(request('list', filePath))).entries,
+  listFiles: async (filePath) => (await binding.run(request('listFiles', filePath))).files,
   write: (filePath, bytes, options = {}) => binding.run(request('write', filePath, { bytes: Buffer.from(bytes), temporary: temporary(), ...options })),
   writeSync: (filePath, bytes, options = {}) => binding.runSync(request('write', filePath, { bytes: Buffer.from(bytes), temporary: temporary(), ...options })),
   copy: (source, destination, options = {}) => binding.run(request('copy', source, { destination, temporary: temporary(), ...options })),

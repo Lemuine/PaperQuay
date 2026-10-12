@@ -20,6 +20,11 @@ const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'paper
     const file = path.join(root, 'test.txt');
     await native.write(file, Buffer.from('Electron native capability'));
     assert.equal((await native.read(file)).bytes.toString(), 'Electron native capability');
+    const listed = await native.listFiles(root);
+    assert.equal(listed.length, 1);
+    assert.equal(listed[0].name, 'test.txt');
+    assert.equal(listed[0].size, Buffer.byteLength('Electron native capability'));
+    assert.ok(Math.abs(listed[0].modifiedAtMs - fs.statSync(file).mtimeMs) < 1);
     const opened = await native.openRead(file);
     try { assert.equal(fs.readFileSync(opened.fd, 'utf8'), 'Electron native capability'); }
     finally { fs.closeSync(opened.fd); }

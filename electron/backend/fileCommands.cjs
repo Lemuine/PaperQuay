@@ -337,17 +337,27 @@ function createFileCommands(context) {
     },
 
     async list_directory_files({ directory, extensionFilter }) {
+      assertSourcePath(directory);
+      let actualDirectory;
       try {
-        const entries = await fsp.readdir(directory, { withFileTypes: true });
+        // Prepared cache/write-directory capabilities already authorize metadata
+        // and retain their approved alias mapping. Do not re-resolve that alias.
+        actualDirectory = authorizeWrite(directory);
+      } catch {
+        const authorized = await context.authorizeLocalRead(directory);
+        actualDirectory = typeof authorized === 'string' ? authorized : directory;
+      }
+      try {
+        // Names and metadata are collected through one retained no-follow
+        // directory handle, never by stat/reopening the returned pathnames.
+        const entries = await nativeFs.listFiles(actualDirectory);
         const extension = cleanString(extensionFilter).replace(/^\./, '').toLowerCase();
         const output = [];
 
         for (const entry of entries) {
-          if (!entry.isFile()) continue;
-          const filePath = path.join(directory, entry.name);
+          const filePath = path.join(actualDirectory, entry.name);
           if (extension && path.extname(filePath).slice(1).toLowerCase() !== extension) continue;
-          const stat = await fsp.stat(filePath);
-          output.push({ path: filePath, name: entry.name, size: stat.size, modifiedAtMs: stat.mtimeMs });
+          output.push({ path: filePath, name: entry.name, size: entry.size, modifiedAtMs: entry.modifiedAtMs });
         }
 
         return output.sort((left, right) => right.modifiedAtMs - left.modifiedAtMs || left.name.localeCompare(right.name));
