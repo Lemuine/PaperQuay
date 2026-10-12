@@ -13,7 +13,22 @@ Windows x64 artifacts:
 
 The binaries are not code-signed. Windows SmartScreen may show an unrecognized-app warning; verify the published SHA-256 before running them.
 
-## Changes since app-v0.1.26-mikutea.11
+Linux x64 packages and macOS Intel/Apple Silicon disk images are also provided. This is a prerelease, not a stable-release or live-upgrade guarantee.
+
+## Known limitation
+
+The startup database-path P2 reported in [#26](https://github.com/mikutea/PaperQuay/pull/26#discussion_r4214657505) remains unfixed and was explicitly accepted for this release. If another party can modify an adopted library while it is being opened, the SQLite path can be redirected outside that library. Use only library/profile directories that you control and that untrusted users cannot modify; accepting a library does not remove this risk.
+
+## Changes since app-v0.1.26-mikutea.12
+
+- Remembers the selected library across restarts and updates, and provides consent-based recovery of an existing library instead of silently replacing it with an empty one ([#26](https://github.com/mikutea/PaperQuay/pull/26)).
+- Loads the complete paginated library, including collections over 1,000 papers, and preserves accurate counts and manual ordering after filtering ([#26](https://github.com/mikutea/PaperQuay/pull/26)).
+- Adds system-theme following and startup update preferences; pending Reader and application settings are preserved during Zotero import ([#26](https://github.com/mikutea/PaperQuay/pull/26)).
+- Improves the notes workspace with complete collection loading, debounced autosave, layout fixes, and source-bound image access ([#26](https://github.com/mikutea/PaperQuay/pull/26)).
+- Keeps WebDAV collection roots canonical while retaining local path aliases, and makes notes/RAG database restoration transactional with pinned source checks ([#26](https://github.com/mikutea/PaperQuay/pull/26)).
+- Tightens native file read/write/delete and directory-listing authorization, migration inputs, renderer navigation, and MinerU PDF upload boundaries. These fixes do not resolve the startup limitation above ([#26](https://github.com/mikutea/PaperQuay/pull/26)).
+
+## Earlier changes in app-v0.1.26-mikutea.12 (since .11)
 
 - Restores readable dark-mode Reader Markdown and knowledge-graph labels, including live theme changes ([#23](https://github.com/mikutea/PaperQuay/pull/23)).
 - Shows waiting, provider-supplied reasoning and answer-stream progress in document QA; keeps reasoning separately expandable, handles failed/empty streams, and avoids duplicating final reasoning snapshots ([#23](https://github.com/mikutea/PaperQuay/pull/23)).
@@ -57,7 +72,8 @@ Personal device-to-device library synchronization is intentionally not an applic
 ## Verification
 
 - The tagged commit is checked by the complete test suite, TypeScript, and production Vite build before publication.
-- Windows x64 Electron packaging and packaged-runtime smoke verification are performed by the release workflow before publication.
+- Windows x64, Linux x64, macOS Intel, and macOS Apple Silicon packaging and packaged-runtime smoke verification are performed by the release workflow before publication.
+- Packaged-runtime smoke checks do not establish a successful installer upgrade or validate every existing library on a real device.
 
 ## Source and licensing
 
@@ -80,7 +96,22 @@ Windows x64 构建：
 
 这些二进制文件未做代码签名，Windows SmartScreen 可能提示“无法识别的应用”；运行前请核对发布页中的 SHA-256。
 
-## 相比 app-v0.1.26-mikutea.11 的更新
+同时提供 Linux x64 安装包，以及 macOS Intel／Apple Silicon 磁盘映像。这是预发布版本，不代表稳定版或真实设备升级已经验收。
+
+## 已知限制
+
+[#26](https://github.com/mikutea/PaperQuay/pull/26#discussion_r4214657505) 中的启动数据库路径 P2 尚未修复，本次发布已明确接受该风险。若其他人能在已有文库打开期间修改其目录，SQLite 路径可能被重定向到文库之外。请仅使用由你控制、且不可信用户无法修改的文库／配置目录；同意接入文库并不能消除这一风险。
+
+## 相比 app-v0.1.26-mikutea.12 的更新
+
+- 重启和更新后记住所选文库，并在获得确认后恢复已有文库，避免静默替换为空文库（[#26](https://github.com/mikutea/PaperQuay/pull/26)）。
+- 完整加载分页文库，覆盖超过 1000 篇论文的集合，筛选后仍保持正确计数和手动排序（[#26](https://github.com/mikutea/PaperQuay/pull/26)）。
+- 新增跟随系统主题及启动更新检查选项；Zotero 导入期间保留尚未保存的阅读器与应用设置（[#26](https://github.com/mikutea/PaperQuay/pull/26)）。
+- 改善笔记工作区的完整集合加载、延迟自动保存、布局和绑定来源的图片访问（[#26](https://github.com/mikutea/PaperQuay/pull/26)）。
+- WebDAV 备份统一集合根路径并保留本地路径别名；笔记／RAG 数据库恢复采用事务处理及固定源检查（[#26](https://github.com/mikutea/PaperQuay/pull/26)）。
+- 收紧原生文件读取、写入、删除和目录列表授权，以及迁移输入、渲染器导航和 MinerU PDF 上传边界。这些修复不包含上述启动路径限制（[#26](https://github.com/mikutea/PaperQuay/pull/26)）。
+
+## .12 中已有的更新（相对 .11）
 
 - 修复阅读器 Markdown 和知识图谱在深色模式下的文字可读性，并支持实时切换主题（[#23](https://github.com/mikutea/PaperQuay/pull/23)）。
 - 文档问答显示等待、模型返回的思考内容及回答流进度；思考内容可独立展开，正确处理失败或空响应，避免重复显示最终思考摘要（[#23](https://github.com/mikutea/PaperQuay/pull/23)）。
@@ -124,7 +155,8 @@ Windows x64 构建：
 ## 验证
 
 - 发布前对标签提交运行完整测试集、TypeScript 检查和生产版 Vite 构建。
-- Windows x64 Electron 打包与发行物运行时烟雾测试由发行工作流完成，并在发布前作为门禁。
+- Windows x64、Linux x64、macOS Intel 与 macOS Apple Silicon 打包及发行物运行时烟雾测试由发行工作流完成，并在发布前作为门禁。
+- 发行物烟雾测试不等于安装器升级成功，也不代表所有已有文库均已在真实设备上验收。
 
 ## 源码与许可
 
