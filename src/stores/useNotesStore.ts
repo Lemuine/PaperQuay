@@ -4,6 +4,7 @@ import {
   createNote,
   deleteNote,
   listNoteTags,
+  listAllNotes,
   listNotes,
   type NoteMutationOptions,
   updateNote,
@@ -49,12 +50,12 @@ export const useNotesStore = create<NotesState>()((set, get) => ({
     set({ loading: true, error: '' });
 
     try {
-      const notes = await listNotes({
+      const query = {
         search: search || undefined,
         tag: tag || undefined,
-        limit: 1000,
         ...request,
-      });
+      };
+      const notes = request.limit === undefined ? await listAllNotes(query) : await listNotes(query);
 
       set((state) => ({
         notes,
@@ -137,7 +138,7 @@ export const useNotesStore = create<NotesState>()((set, get) => ({
         notes: state.notes
           .map((item) => (item.id === note.id ? note : item))
           .sort((left, right) => Number(right.isPinned) - Number(left.isPinned) || right.updatedAt - left.updatedAt),
-        activeNoteId: note.id,
+        activeNoteId: state.activeNoteId ?? note.id,
       }));
       void get().refreshTags();
       return note;

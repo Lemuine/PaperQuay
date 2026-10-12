@@ -10,7 +10,7 @@ import {
   type LibraryAgentRagCitation,
   type LibraryAgentStreamHandlers,
 } from '../../services/libraryAgent';
-import { listLibraryCategories, listLibraryPapers } from '../../services/library';
+import { listLibraryCategories, listAllLibraryPapers } from '../../services/library';
 import type { LiteratureCategory, LiteraturePaper } from '../../types/library';
 import type { DocumentChatAttachment, ModelReasoningEffort, QaModelPreset } from '../../types/reader';
 import {
@@ -205,10 +205,9 @@ function AgentWorkspace() {
     try {
       const [nextCategories, nextPapers] = await Promise.all([
         listLibraryCategories(),
-        listLibraryPapers({
+        listAllLibraryPapers({
           sortBy: 'manual',
           sortDirection: 'asc',
-          limit: 1000,
         }),
       ]);
 

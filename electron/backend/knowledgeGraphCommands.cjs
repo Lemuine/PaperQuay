@@ -1,5 +1,5 @@
-const fs = require('node:fs');
 const path = require('node:path');
+const nativeFs = require('./nativeFs.cjs');
 const {
   cleanString,
   id,
@@ -7,7 +7,6 @@ const {
   parseJsonObject,
   pickChatText,
   toError,
-  writeJsonSync,
 } = require('./utils.cjs');
 
 const NATIVE_LIBRARY_PREFIX = 'native-library:';
@@ -103,21 +102,22 @@ function relationStorePath(appPaths) {
 
 function readRelationStore(appPaths) {
   try {
-    const raw = JSON.parse(fs.readFileSync(relationStorePath(appPaths), 'utf8'));
+    const raw = JSON.parse(nativeFs.readSync(relationStorePath(appPaths), { singleLink: true }).bytes.toString('utf8'));
     return {
       version: 1,
       relations: Array.isArray(raw?.relations) ? raw.relations : [],
     };
-  } catch {
-    return { version: 1, relations: [] };
+  } catch (error) {
+    if (error.code === 'ENOENT') return { version: 1, relations: [] };
+    throw error;
   }
 }
 
 function writeRelationStore(appPaths, store) {
-  writeJsonSync(relationStorePath(appPaths), {
+  nativeFs.writeSync(relationStorePath(appPaths), JSON.stringify({
     version: 1,
     relations: Array.isArray(store?.relations) ? store.relations : [],
-  });
+  }));
 }
 
 function normalizeCustomRelation(input = {}) {
@@ -461,7 +461,7 @@ function createKnowledgeGraphSnapshot(context, request = {}) {
   const localNodeId = cleanString(request.localNodeId);
   const localDepth = normalizeLimit(request.localDepth, 1, 0, 4);
   const library = store.load();
-  const notes = includeNotes ? noteStore.listNotes({ limit: 5000 }) : [];
+  const notes = includeNotes ? noteStore.listAllNotes() : [];
   const nodes = new Map();
   const edges = new Map();
   const paperIds = new Set(library.papers.map((paper) => paper.id));
@@ -860,7 +860,7 @@ async function suggestAiRelations(context, request = {}, options = {}) {
     localDepth: cleanString(request.focusNodeId) ? normalizeLimit(request.localDepth, 2, 1, 4) : 0,
   });
   const library = context.store.load();
-  const notes = context.noteStore.listNotes({ limit: 5000 });
+  const notes = context.noteStore.listAllNotes();
   const focusNodeId = cleanString(request.focusNodeId);
   const nodes = snapshot.nodes
     .filter((node) => node.type === 'paper' || node.type === 'note')

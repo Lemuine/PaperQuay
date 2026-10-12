@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  acknowledgeNoteEditorDraftSave,
+  canPersistNoteEditorDraft,
   clearNoteEditorDraft,
   componentBlockNode,
   getImageFilesFromDataTransfer,
@@ -21,6 +23,42 @@ import {
   writeNoteEditorDraft,
 } from '../src/features/notes/noteEditorUtils.ts';
 import type { Note, NoteAnchor } from '../src/types/notes.ts';
+
+test('draft persistence waits for the loaded note fields to render', () => {
+  assert.equal(canPersistNoteEditorDraft('alpha', null, 'empty', 'loaded'), false);
+  assert.equal(canPersistNoteEditorDraft('beta', 'alpha', 'loaded', 'loaded'), false);
+  assert.equal(canPersistNoteEditorDraft('beta', 'beta', 'empty', 'loaded'), false);
+  assert.equal(canPersistNoteEditorDraft('beta', 'beta', 'loaded', 'loaded'), true);
+  assert.equal(canPersistNoteEditorDraft('beta', 'beta', 'new edit', null), true);
+});
+
+test('save acknowledgements keep newer drafts and clear only the submitted snapshot', () => {
+  const sourceId = 'save-race';
+  const draft = {
+    noteId: 'alpha', baseUpdatedAt: 1, savedSignature: 'original',
+    draftSignature: 'submitted', title: 'Submitted', tagText: '', color: '#ffffff',
+    snapshot: snapshotFromNote(note()), pendingAnchors: [], updatedAt: 2,
+  };
+  writeNoteEditorDraft(sourceId, draft);
+  acknowledgeNoteEditorDraftSave(sourceId, {
+    noteId: 'alpha', updatedAt: 3, submittedSignature: 'submitted', savedSignature: 'saved',
+  });
+  assert.equal(readNoteEditorDraft(sourceId, 'alpha', 3), null);
+
+  writeNoteEditorDraft(sourceId, { ...draft, draftSignature: 'newer', title: 'Newer draft' });
+  acknowledgeNoteEditorDraftSave(sourceId, {
+    noteId: 'alpha', updatedAt: 3, submittedSignature: 'submitted', savedSignature: 'saved',
+  });
+  const retained = readNoteEditorDraft(sourceId, 'alpha', 3);
+  assert.equal(retained?.title, 'Newer draft');
+  assert.equal(retained?.draftSignature, 'newer');
+  assert.equal(retained?.savedSignature, 'saved');
+  acknowledgeNoteEditorDraftSave(sourceId, {
+    noteId: 'beta', updatedAt: 4, submittedSignature: 'newer', savedSignature: 'saved',
+  });
+  assert.equal(readNoteEditorDraft(sourceId, 'alpha', 3)?.title, 'Newer draft');
+  clearNoteEditorDraft(sourceId, 'alpha');
+});
 
 function note(overrides: Partial<Note> = {}): Note {
   return {

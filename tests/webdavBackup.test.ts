@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, mkdirSync, writeFileSync, symlinkSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -249,6 +249,112 @@ test('WebDAV backup uploads and restores library, notes, and RAG SQLite database
     source.close();
     target.close();
   }
+});
+
+for (const custom of [false, true]) {
+  test(`derived backup uses canonical relative paths for an approved ${custom ? 'configured' : 'default'} cache link`, async () => {
+    const source = createContext('paperquay-webdav-cache-source-');
+    const target = createContext('paperquay-webdav-cache-target-');
+    const webdav = new MemoryWebdav();
+    try {
+      seedLibrary(source);
+      const library = source.store.load();
+      library.webdav.includeDerived = true;
+      source.store.save(library);
+      const actualRoot = path.join(source.appPaths.dataDir, 'cache-target');
+      const alias = path.join(source.appPaths.dataDir, 'cache-alias');
+      const files = new Map([
+        ['doc/full.md', 'Parsed fixture text'],
+        ['doc/translations/zh.json', '{"text":"Fixture translation"}'],
+        ['doc/summaries/overview.json', '{"summary":"Fixture summary"}'],
+      ]);
+      for (const [relative, content] of files) {
+        const file = path.join(actualRoot, relative);
+        mkdirSync(path.dirname(file), { recursive: true }); writeFileSync(file, content);
+      }
+      symlinkSync(actualRoot, alias, process.platform === 'win32' ? 'junction' : 'dir');
+      if (custom) {
+        mkdirSync(source.appPaths.mineruCacheDir, { recursive: true });
+        mkdirSync(path.dirname(source.appPaths.configPath), { recursive: true });
+        writeFileSync(source.appPaths.configPath, JSON.stringify({ settings: { mineruCacheDir: alias } }));
+      } else source.appPaths.mineruCacheDir = alias;
+      const context = { ...source, authorizeLocalRead: (file: string) => realpathSync.native(file) };
+      const backup = await runBackup(context, webdav);
+      assert.equal(backup.ok, true); assert.equal(backup.derivedCount, files.size);
+      const derived = backup.objects.filter((object: { kind: string }) => ['mineru', 'translation', 'summary'].includes(object.kind));
+      const client = new WebdavClient({ endpointUrl: 'https://backup.invalid/dav', remoteRoot: 'paperquay/fixtures' });
+      for (const object of derived) {
+        assert.equal(object.remotePath.split('/').some((part: string) => part === '..' || part === '.'), false);
+        assert.ok(new URL(client.buildUrl(object.remotePath)).pathname.startsWith('/dav/paperquay/fixtures/latest/derived/'));
+        const relative = object.remotePath.replace(/^latest\/derived\/(?:root-[a-f0-9]{8}\/)?/, '');
+        assert.ok(files.has(relative)); assert.equal(webdav.objects.get(object.remotePath)?.toString(), files.get(relative));
+      }
+      const repeated = await runBackup(context, webdav);
+      assert.equal(repeated.ok, true);
+      assert.equal(repeated.objects.filter((object: { kind: string; status: string }) => object.kind !== 'database' && object.status === 'skipped').length, files.size);
+      const restored = await runRestore(target, webdav);
+      assert.equal(restored.ok, true, JSON.stringify(restored.objects)); assert.equal(restored.derivedRestoredCount, files.size);
+      for (const [relative, content] of files) {
+        assert.equal(readFileSync(path.join(actualRoot, relative), 'utf8'), content);
+        assert.equal(readFileSync(path.join(target.appPaths.mineruCacheDir, relative), 'utf8'), content);
+      }
+    } finally { source.close(); target.close(); }
+  });
+}
+
+test('remote backup IDs cannot choose or remove the database restore staging directory', async () => {
+  const source = createContext('paperquay-webdav-staging-source-');
+  const target = createContext('paperquay-webdav-staging-target-');
+  const webdav = new MemoryWebdav();
+  try {
+    seedLibrary(source);
+    assert.equal((await runBackup(source, webdav)).ok, true);
+    const canary = path.join(target.appPaths.dataDir, 'unrelated');
+    mkdirSync(canary); writeFileSync(path.join(canary, 'keep.txt'), 'preserve');
+    const manifest = JSON.parse((await webdav.getText(LATEST_MANIFEST_REMOTE_PATH))!);
+    manifest.backupId = '../unrelated';
+    webdav.objects.set(LATEST_MANIFEST_REMOTE_PATH, Buffer.from(JSON.stringify(manifest)));
+    const load = target.store.loadFromSnapshot;
+    target.store.loadFromSnapshot = (file: string) => {
+      assert.ok(file.startsWith(path.join(target.appPaths.dataDir, '.backup-snapshots', 'restore-')));
+      return load(file);
+    };
+    const restored = await runRestore(target, webdav);
+    assert.equal(restored.ok, true, JSON.stringify(restored.objects));
+    assert.equal(readFileSync(path.join(canary, 'keep.txt'), 'utf8'), 'preserve');
+    assert.deepEqual(readdirSync(path.join(target.appPaths.dataDir, '.backup-snapshots')), []);
+  } finally { source.close(); target.close(); }
+});
+
+test('rejected SQLite and legacy JSON merges report zero committed row counts', async () => {
+  const source = createContext('paperquay-webdav-rejected-source-');
+  try {
+    seedLibrary(source);
+    for (const legacy of [false, true]) {
+      const target = createContext('paperquay-webdav-rejected-target-');
+      const webdav = new MemoryWebdav();
+      try {
+        await runBackup(source, webdav);
+        const manifest = JSON.parse((await webdav.getText(LATEST_MANIFEST_REMOTE_PATH))!);
+        if (legacy) {
+          const remotePath = 'latest/database/paperquay-library.json';
+          webdav.objects.set(remotePath, Buffer.from(JSON.stringify(source.store.load())));
+          manifest.objects = [{ kind: 'database', remotePath, status: 'uploaded' }];
+        } else {
+          manifest.objects = manifest.objects.filter((object: { remotePath: string }) => object.remotePath === LIBRARY_DATABASE_REMOTE_PATH);
+        }
+        webdav.objects.set(LATEST_MANIFEST_REMOTE_PATH, Buffer.from(JSON.stringify(manifest)));
+        const result = await runRestore({ ...target, validateLibraryFileOperation(library: { papers: unknown[] }) {
+          if (library.papers.length) throw new Error('Unapproved restored attachment');
+        } }, webdav);
+        assert.equal(result.ok, false);
+        assert.equal(result.mergedRowCount, 0);
+        assert.equal(result.updatedRowCount, 0);
+        assert.deepEqual(result.tables, []);
+        assert.equal(target.store.load().papers.length, 0);
+      } finally { target.close(); }
+    }
+  } finally { source.close(); }
 });
 
 test('WebDAV backup propagates latest manifest errors and does not leave snapshot directories', async () => {

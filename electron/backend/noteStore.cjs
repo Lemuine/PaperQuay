@@ -1,8 +1,8 @@
 const fs = require('node:fs');
-const fsp = require('node:fs/promises');
 const path = require('node:path');
 const { DatabaseSync, sqlStringLiteral, withTransaction } = require('./nodeSqlite.cjs');
 const { cleanString, id, now } = require('./utils.cjs');
+const { withSnapshotDatabase, assertSnapshotTables, replaceTables } = require('./databaseRestore.cjs');
 
 const NOTE_TYPES = new Set(['highlight', 'area', 'standalone', 'ai-chat']);
 const GLOBAL_NOTES_PAPER_ID = 'global-notes';
@@ -10,10 +10,15 @@ const GLOBAL_NOTES_PAPER_ID = 'global-notes';
 function openDatabase(databasePath) {
   fs.mkdirSync(path.dirname(databasePath), { recursive: true });
   const db = new DatabaseSync(databasePath, { timeout: 5000 });
-  db.exec('PRAGMA journal_mode = WAL;');
-  db.exec('PRAGMA foreign_keys = ON;');
-  createSchema(db);
-  return db;
+  try {
+    db.exec('PRAGMA journal_mode = WAL;');
+    db.exec('PRAGMA foreign_keys = ON;');
+    createSchema(db);
+    return db;
+  } catch (error) {
+    if (db.isOpen) db.close();
+    throw error;
+  }
 }
 
 function getTableColumns(db, tableName) {
@@ -602,6 +607,15 @@ function backlinkRowsByTargetId(db, noteIds) {
 }
 
 function hydrateNotes(db, rows) {
+  // Full-library reads can exceed SQLite's bound-parameter limit. Hydrate
+  // related records in batches without limiting the returned note count.
+  if (rows.length > 500) {
+    const notes = [];
+    for (let offset = 0; offset < rows.length; offset += 500) {
+      notes.push(...hydrateNotes(db, rows.slice(offset, offset + 500)));
+    }
+    return notes;
+  }
   const noteIds = rows.map((row) => row.id);
   const tagMap = relatedRowsByNoteId(db, 'note_tags', 'tag', noteIds);
   const paperLinkMap = relatedRowsByNoteId(db, 'note_paper_links', 'paper_id', noteIds);
@@ -830,13 +844,12 @@ function createNoteStore(appPaths) {
 
   let db = openDatabase(appPaths.notesDatabasePath);
 
-  function listNotes(request = {}) {
+  function queryNotes(request = {}, limit) {
     const paperId = cleanString(request.paperId);
     const linkedPaperId = cleanString(request.linkedPaperId);
     const type = cleanString(request.type);
     const tag = cleanString(request.tag).replace(/^#/, '');
     const search = cleanString(request.search).toLowerCase();
-    const limit = Math.max(1, Math.min(5000, Math.trunc(Number(request.limit)) || 500));
     const includeDeleted = request.includeDeleted === true;
     const where = [];
     const args = [];
@@ -871,10 +884,19 @@ function createNoteStore(appPaths) {
       FROM notes
       ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
       ORDER BY is_pinned DESC, updated_at DESC, created_at DESC
-      LIMIT ?
-    `).all(...args, limit);
+      ${limit === undefined ? '' : 'LIMIT ?'}
+    `).all(...args, ...(limit === undefined ? [] : [limit]));
 
     return hydrateNotes(db, rows);
+  }
+
+  function listNotes(request = {}) {
+    const limit = Math.max(1, Math.min(5000, Math.trunc(Number(request.limit)) || 500));
+    return queryNotes(request, limit);
+  }
+
+  function listAllNotes(request = {}) {
+    return queryNotes(request);
   }
 
   function listTags(request = {}) {
@@ -953,6 +975,7 @@ function createNoteStore(appPaths) {
       return backlinkRowsByTargetId(db, [noteId]).get(noteId) ?? [];
     },
     listNotes,
+    listAllNotes,
     listTags,
     updateNote,
     snapshotTo(targetPath) {
@@ -962,21 +985,19 @@ function createNoteStore(appPaths) {
       return targetPath;
     },
     async replaceWithSnapshot(snapshotPath) {
-      const replacementPath = `${appPaths.notesDatabasePath}.restore-${Date.now()}.tmp`;
-      await fsp.mkdir(path.dirname(appPaths.notesDatabasePath), { recursive: true });
-      await fsp.copyFile(snapshotPath, replacementPath);
-
-      if (db.isOpen) db.close();
-
-      try {
-        await fsp.rm(appPaths.notesDatabasePath, { force: true });
-        await fsp.rm(`${appPaths.notesDatabasePath}-wal`, { force: true });
-        await fsp.rm(`${appPaths.notesDatabasePath}-shm`, { force: true });
-        await fsp.rename(replacementPath, appPaths.notesDatabasePath);
-      } finally {
-        await fsp.rm(replacementPath, { force: true }).catch(() => {});
-        db = openDatabase(appPaths.notesDatabasePath);
-      }
+      const tables = ['notes', 'note_tags', 'note_links', 'note_paper_links'];
+      return withSnapshotDatabase(snapshotPath, openDatabase, (source) => {
+        assertSnapshotTables(source, [...tables, 'notes_fts'], db);
+        return withTransaction(db, () => {
+          replaceTables(db, source, tables);
+          if (ftsTableExists(db)) {
+            db.exec(`DELETE FROM notes_fts;
+              INSERT INTO notes_fts (note_id, title, content_text, excerpt)
+              SELECT id, title, COALESCE(NULLIF(content_text, ''), content, ''), COALESCE(excerpt, '')
+              FROM notes WHERE deleted_at IS NULL`);
+          }
+        });
+      }, tables);
     },
   };
 }

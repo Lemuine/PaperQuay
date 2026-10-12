@@ -11,12 +11,12 @@ import {
   Wand2,
 } from 'lucide-react';
 import { useAppLocale, useLocaleText } from '../../i18n/uiLanguage';
-import { listLibraryPapers } from '../../services/library';
+import { listAllLibraryPapers } from '../../services/library';
 import {
   loadLibraryPaperReviewContext,
   type LibraryPaperReviewContext,
 } from '../../services/libraryAgent';
-import { listNotes } from '../../services/notes';
+import { listAllNotes } from '../../services/notes';
 import { readReaderConfigFile } from '../../services/readerConfig';
 import {
   exportReviewDocx,
@@ -795,8 +795,8 @@ export default function ReviewWritingWorkspace() {
     async function loadData() {
       try {
         const [nextPapers, nextNotes, modelConfig] = await Promise.all([
-          listLibraryPapers({ sortBy: 'updatedAt', sortDirection: 'desc', limit: 1000 }),
-          listNotes({ limit: 1000 }),
+          listAllLibraryPapers({ sortBy: 'updatedAt', sortDirection: 'desc' }),
+          listAllNotes(),
           loadReviewModelConfig(),
         ]);
 

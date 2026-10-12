@@ -142,7 +142,7 @@ export function PdfViewerToolbar({
 
   return (
     <div className={cn(
-      'border-b border-slate-200/80 bg-white/78 px-4 py-3 backdrop-blur-xl dark:border-white/10 dark:bg-[var(--pq-bg-primary)]',
+      'max-h-[40%] shrink-0 overflow-y-auto border-b border-slate-200/80 bg-white/78 px-4 py-3 backdrop-blur-xl dark:border-white/10 dark:bg-[var(--pq-bg-primary)]',
       hideToolbar && 'hidden',
     )}>
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -189,8 +189,8 @@ export function PdfViewerToolbar({
           ))}
         </div>
 
-        <div className="inline-flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white/86 px-2.5 py-2 dark:border-white/10 dark:bg-[var(--pq-surface-1)]">
-          <div className="flex items-center gap-1.5">
+        <div className="inline-flex max-w-full flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white/86 px-2.5 py-2 dark:border-white/10 dark:bg-[var(--pq-surface-1)]">
+          <div className="flex flex-wrap items-center gap-1.5">
             {PDF_ANNOTATION_COLOR_PRESETS.map((preset) => {
               const colorValue = getPdfAnnotationColorValue(preset, activeColorTool);
               const active = colorValue.toLowerCase() === activeToolColor.toLowerCase();

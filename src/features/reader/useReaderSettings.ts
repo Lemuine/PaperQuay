@@ -7,14 +7,13 @@ import {
 } from 'react';
 
 import {
-  approveWritePath,
   getAppDefaultPaths,
-  readLocalTextFileIfExists,
 } from '../../services/desktop';
 import type { AppDefaultPaths } from '../../services/desktop';
 import {
   readReaderConfigFile,
-  writeReaderConfigFile,
+  scheduleReaderConfigWrite,
+  flushReaderConfigWrites,
 } from '../../services/readerConfig';
 import {
   getLibrarySettings,
@@ -36,9 +35,7 @@ import {
   emitUiLanguageChanged,
 } from '../../app/appEvents';
 import {
-  buildLegacyConfigPath,
   buildLegacyModelPresets,
-  CONFIG_WRITE_DEBOUNCE_MS,
   createQaPreset,
   DEFAULT_QA_PRESET,
   DEFAULT_QA_PRESET_ID,
@@ -66,6 +63,9 @@ export function useReaderSettings({
   setStatusMessage,
 }: UseReaderSettingsOptions) {
   const legacyModelPresetMigrationDoneRef = useRef(false);
+  const nativeSettingsRequestIdRef = useRef(0);
+  const nativeSettingsPendingRef = useRef(false);
+  const nativeSettingsFailedKeysRef = useRef(new Set<string>());
 
   const [settings, setSettings] = useState<ReaderSettings>(loadSettings);
   const [readerSecrets, setReaderSecrets] = useState<ReaderSecrets>(DEFAULT_SECRETS);
@@ -73,6 +73,10 @@ export function useReaderSettings({
   const [librarySettings, setLibrarySettings] = useState<LibrarySettings | null>(null);
   const [appDefaultPaths, setAppDefaultPaths] = useState<AppDefaultPaths | null>(null);
   const [configHydrated, setConfigHydrated] = useState(false);
+  const [configSaveError, setConfigSaveError] = useState('');
+  const retryConfigSave = useCallback(() => {
+    void flushReaderConfigWrites().catch(() => {});
+  }, []);
 
   const l = useCallback<LocaleTextFn>(
     (zh, en) => pickLocaleText(settings.uiLanguage, zh, en),
@@ -106,13 +110,16 @@ export function useReaderSettings({
       patch: Partial<LibrarySettings> | LibrarySettings,
       source = 'reader-preferences',
     ): Promise<LibrarySettings | null> => {
+      const requestId = ++nativeSettingsRequestIdRef.current;
+      nativeSettingsPendingRef.current = true;
       try {
         const base = librarySettings ?? await getLibrarySettings();
-        const nextSettings = await updateLibrarySettings({
-          ...base,
-          ...patch,
-        });
+        setLibrarySettings((current) => ({ ...(current ?? base), ...patch }));
+        if (patch.zoteroLocalDataDir !== undefined) setZoteroLocalDataDir(patch.zoteroLocalDataDir.trim());
+        const nextSettings = await updateLibrarySettings(patch);
+        for (const key of Object.keys(patch)) nativeSettingsFailedKeysRef.current.delete(key);
 
+        if (requestId !== nativeSettingsRequestIdRef.current) return nextSettings;
         setLibrarySettings(nextSettings);
 
         if (Object.prototype.hasOwnProperty.call(patch, 'zoteroLocalDataDir')) {
@@ -120,8 +127,13 @@ export function useReaderSettings({
         }
 
         emitLibrarySettingsUpdated(nextSettings, source);
+        if (nativeSettingsFailedKeysRef.current.size === 0) {
+          setError('');
+          setStatusMessage(l('文库设置已保存', 'Library settings saved'));
+        }
         return nextSettings;
       } catch (nextError) {
+        for (const key of Object.keys(patch)) nativeSettingsFailedKeysRef.current.add(key);
         const message =
           nextError instanceof Error
             ? nextError.message
@@ -129,7 +141,17 @@ export function useReaderSettings({
 
         setError(message);
         setStatusMessage(message);
+        if (requestId === nativeSettingsRequestIdRef.current) {
+          const persisted = await getLibrarySettings().catch(() => null);
+          if (persisted && requestId === nativeSettingsRequestIdRef.current) {
+            setLibrarySettings(persisted);
+            setZoteroLocalDataDir(persisted.zoteroLocalDataDir.trim());
+            emitLibrarySettingsUpdated(persisted, source);
+          }
+        }
         return null;
+      } finally {
+        if (requestId === nativeSettingsRequestIdRef.current) nativeSettingsPendingRef.current = false;
       }
     },
     [l, librarySettings, setError, setStatusMessage],
@@ -316,21 +338,6 @@ export function useReaderSettings({
               legacySecrets,
               defaultPaths,
             );
-          } else {
-            const legacyConfigText = await readLocalTextFileIfExists(
-              buildLegacyConfigPath(defaultPaths.executableDir),
-            );
-
-            if (legacyConfigText) {
-              const parsedLegacyConfig = JSON.parse(legacyConfigText) as Partial<ReaderConfigFile>;
-
-              nextConfig = mergeReaderConfigWithDefaults(
-                parsedLegacyConfig,
-                loadSettings(),
-                legacySecrets,
-                defaultPaths,
-              );
-            }
           }
         } catch {
         }
@@ -355,10 +362,7 @@ export function useReaderSettings({
         setZoteroLocalDataDir(resolvedZoteroDir);
         setLibrarySettings(nativeLibrarySettings);
         if (nativeLibrarySettings && configZoteroDir && !nativeZoteroDir) {
-          const syncedSettings = await updateLibrarySettings({
-            ...nativeLibrarySettings,
-            zoteroLocalDataDir: configZoteroDir,
-          });
+          const syncedSettings = await updateLibrarySettings({ zoteroLocalDataDir: configZoteroDir });
 
           setLibrarySettings(syncedSettings);
           emitLibrarySettingsUpdated(syncedSettings, 'reader-config-hydration');
@@ -400,18 +404,6 @@ export function useReaderSettings({
   }, [settings]);
 
   useEffect(() => {
-    const mineruCacheDir = settings.mineruCacheDir.trim();
-
-    if (!configHydrated || !mineruCacheDir) {
-      return;
-    }
-
-    void approveWritePath(mineruCacheDir).catch((error) => {
-      console.error('Failed to approve the configured MinerU cache directory.', error);
-    });
-  }, [configHydrated, settings.mineruCacheDir]);
-
-  useEffect(() => {
     if (qaModelPresets.some((preset) => preset.id === settings.qaActivePresetId)) {
       return;
     }
@@ -429,27 +421,26 @@ export function useReaderSettings({
       return undefined;
     }
 
-    const timer = window.setTimeout(() => {
-      const nextConfig: Partial<ReaderConfigFile> = {
-        version: READER_CONFIG_VERSION,
-        settings,
-        secrets: readerSecrets,
-        zoteroLocalDataDir,
-        leftSidebarCollapsed: false,
-      };
-
-      void writeReaderConfigFile(nextConfig, appDefaultPaths)
-        .then(() => {
-          window.localStorage.removeItem(SECRETS_STORAGE_KEY);
-        })
-        .catch((error) => {
-          console.error('Failed to persist reader config to file.', error);
-        });
-    }, CONFIG_WRITE_DEBOUNCE_MS);
-
-    return () => {
-      window.clearTimeout(timer);
+    const nextConfig: Partial<ReaderConfigFile> = {
+      version: READER_CONFIG_VERSION,
+      settings,
+      secrets: readerSecrets,
+      zoteroLocalDataDir,
+      leftSidebarCollapsed: false,
     };
+    scheduleReaderConfigWrite(nextConfig, appDefaultPaths,
+      (nativeSettings) => {
+        if (nativeSettings && !nativeSettingsPendingRef.current) {
+          setLibrarySettings(nativeSettings);
+          emitLibrarySettingsUpdated(nativeSettings, 'reader-config-save');
+        }
+        window.localStorage.removeItem(SECRETS_STORAGE_KEY);
+        setConfigSaveError('');
+      },
+      () => setConfigSaveError(pickLocaleText(settings.uiLanguage,
+        '设置尚未保存到磁盘，请检查磁盘空间或文件权限；关闭时会再次尝试保存。',
+        'Settings have not been saved. Check disk space or file permissions; closing will retry the save.')),
+    );
   }, [
     appDefaultPaths,
     configHydrated,
@@ -623,6 +614,8 @@ export function useReaderSettings({
   return {
     appDefaultPaths,
     configHydrated,
+    configSaveError,
+    retryConfigSave,
     l,
     qaModelPresets,
     readerSecrets,

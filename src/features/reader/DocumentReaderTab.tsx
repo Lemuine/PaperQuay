@@ -5,7 +5,7 @@ import {
   downloadRemoteFileToPath,
   loadPdfBinary,
   listLocalDirectoryFiles,
-  localPathExists,
+  authorizedLocalFileExists,
   readLocalTextFile,
   readLocalTextFileIfExists,
   runMineruCloudParse,
@@ -15,7 +15,7 @@ import {
 import {
   createNote as createStoredNote,
   deleteNote as deleteStoredNote,
-  listNotes as listStoredNotes,
+  listAllNotes as listStoredNotes,
   type NoteMutationOptions,
   updateNote as updateStoredNote,
 } from '../../services/notes';
@@ -1091,7 +1091,7 @@ function DocumentReaderTab({
 
         let nextResolvedItem = resolvedItem;
 
-        if (source.kind === 'local-path' && !(await localPathExists(source.path))) {
+        if (source.kind === 'local-path' && !(await authorizedLocalFileExists(source.path))) {
           throw new Error(
             lRef.current(
               `PDF 文件不存在：${source.path}`,
@@ -2195,7 +2195,7 @@ function DocumentReaderTab({
       try {
         const nextSource: Exclude<PdfSource, null> = { kind: 'local-path', path };
 
-        if (!(await localPathExists(path))) {
+        if (!(await authorizedLocalFileExists(path))) {
           throw new Error(
             lRef.current(
               `PDF 文件不存在：${path}`,
@@ -2373,7 +2373,7 @@ function DocumentReaderTab({
     setNotesError('');
 
     try {
-      const nextNotes = await listStoredNotes({ limit: 1000 });
+      const nextNotes = await listStoredNotes();
 
       setNotes(nextNotes);
       setReaderNoteExternalUpdate((current) =>
@@ -2586,7 +2586,7 @@ function DocumentReaderTab({
         sortReaderNotes(current.map((note) => (note.id === updated.id ? updated : note))),
       );
       setReaderNoteExternalUpdate((current) => (current?.id === updated.id ? null : current));
-      setActiveNoteId(updated.id);
+      setActiveNoteId((current) => current ?? updated.id);
       setStatusMessage(lRef.current('已保存笔记', 'Saved note'));
     } catch (nextError) {
       setNotesError(
