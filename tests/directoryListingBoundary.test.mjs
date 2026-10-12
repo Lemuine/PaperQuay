@@ -15,7 +15,10 @@ const { isWithin, resolveAuthorizedPath } = require('./pathAccess.cjs');
 const nativeFs = require('./nativeFs.cjs');
 
 function fixture(t) {
-  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'pq-directory-listing-')));
+  // macOS's per-user temporary path can exceed the Unix socket name limit.
+  // A short, unique fixture keeps the real special-file coverage enabled.
+  const temporaryBase = process.platform === 'darwin' ? '/tmp' : os.tmpdir();
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(temporaryBase, 'pq-directory-listing-')));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const shared = path.join(root, 'shared'), outside = path.join(root, 'outside');
   fs.mkdirSync(shared); fs.mkdirSync(outside);
