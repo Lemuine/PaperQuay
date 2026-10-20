@@ -51,7 +51,7 @@ import {
   persistPdfAnnotationToolColors,
   type PdfAnnotationColorTool,
 } from './annotationColors';
-import { buildPdfJsDocumentInit, getPdfSourceSignature } from './pdfDocumentSource';
+import { buildPdfJsDocumentInit, getPdfSourceSignature, type PdfJsDocumentInit } from './pdfDocumentSource';
 import { PdfPageOverlay } from './PdfPageOverlay';
 import { PdfReadingHeatmapBar } from './PdfReadingHeatmapBar';
 import {
@@ -239,6 +239,7 @@ function PdfViewer({
   onSaveSuccess,
 }: PdfViewerProps) {
   const l = useLocaleText();
+  const documentInit = useMemo(() => buildPdfJsDocumentInit(source, pdfData), [pdfData, source]);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const thumbnailSidebarRef = useRef<HTMLElement | null>(null);
   const viewerRef = useRef<HTMLDivElement | null>(null);
@@ -267,6 +268,7 @@ function PdfViewer({
   const lastHandledHighlightSignalRef = useRef(highlightScrollSignal);
   const hoveredBlockIdRef = useRef<string | null>(hoveredBlockId);
   const currentPageRef = useRef(1);
+  const pageCountRef = useRef(0);
   const scrollPositionRef = useRef<PdfScrollPosition | null>(scrollPosition);
   const sourceSignatureRef = useRef('');
   const restoringScrollRef = useRef(false);
@@ -276,7 +278,13 @@ function PdfViewer({
   const lastUserScrollAtRef = useRef(0);
 
   const [editorTool, setEditorTool] = useState<AnnotationEditorTool>('none');
-  const [pageCount, setPageCount] = useState(0);
+  const [loadedPageCount, setLoadedPageCount] = useState<{
+    documentInit: PdfJsDocumentInit;
+    count: number;
+  } | null>(null);
+  // Never expose the previous document's count while a new source is loading.
+  const pageCount = loadedPageCount?.documentInit === documentInit ? loadedPageCount.count : 0;
+  pageCountRef.current = pageCount;
   const [pageSizes, setPageSizes] = useState<Record<number, PageSize>>({});
   const [pageHosts, setPageHosts] = useState<Record<number, PageHostState>>({});
   const [currentPage, setCurrentPage] = useState(1);
@@ -327,7 +335,6 @@ function PdfViewer({
     );
   }, [l]);
 
-  const documentInit = useMemo(() => buildPdfJsDocumentInit(source, pdfData), [pdfData, source]);
   const sourceSignature = useMemo(
     () => getPdfSourceSignature(source, currentPdfName),
     [currentPdfName, source],
@@ -641,6 +648,7 @@ function PdfViewer({
     };
   }, [sourceSignature]);
 
+  // Page-count updates must not change the layout callback and restart PDF loading.
   const updateLocalScrollPosition = useCallback((options?: { syncPageState?: boolean }) => {
     const nextPosition = buildCurrentScrollPosition();
 
@@ -651,7 +659,7 @@ function PdfViewer({
     scrollPositionRef.current = nextPosition;
     setNumberStateIfChanged(
       setReadingProgressRatio,
-      getPdfReadingProgressRatio(nextPosition, pageCount),
+      getPdfReadingProgressRatio(nextPosition, pageCountRef.current),
     );
 
     if (currentPageRef.current !== nextPosition.page) {
@@ -663,7 +671,7 @@ function PdfViewer({
     }
 
     return nextPosition;
-  }, [buildCurrentScrollPosition, pageCount]);
+  }, [buildCurrentScrollPosition]);
 
   const emitScrollPosition = useCallback((options?: { syncPageState?: boolean }) => {
     if (!onScrollPositionChange) {
@@ -1637,7 +1645,7 @@ function PdfViewer({
   }, [active, handleDeleteSelected, hasSelectedEditor]);
 
   useEffect(() => {
-    setPageCount(0);
+    setLoadedPageCount(null);
     pageSizesRef.current = {};
     pendingPageSizeRequestsRef.current.clear();
     setPageSizes({});
@@ -1661,7 +1669,7 @@ function PdfViewer({
 
     if (!container || !viewer || !documentInit) {
       if (!documentInit) {
-        setPageCount(0);
+        setLoadedPageCount(null);
         pageHostsRef.current = {};
         setPageHosts({});
         setNumberStateIfChanged(setCurrentPage, 1);
@@ -1782,7 +1790,7 @@ function PdfViewer({
         }
 
         pdfDocumentRef.current = pdfDocument;
-        setPageCount(pdfDocument.numPages);
+        setLoadedPageCount({ documentInit, count: pdfDocument.numPages });
 
         if (!cancelled && pdfDocumentRef.current === pdfDocument) {
           pdfViewer.setDocument(pdfDocument);
