@@ -1,8 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X } from 'lucide-react';
+import { Highlighter, Underline, Eraser, X } from 'lucide-react';
 import { useLocaleText } from '../../i18n/uiLanguage';
-import type { ClientAnchorRect, SelectedExcerpt } from '../../types/reader';
+import type { ClientAnchorRect, SelectedExcerpt, TextMarkupStyle } from '../../types/reader';
+import { PDF_ANNOTATION_COLOR_PRESETS } from '../pdf/annotationColors';
+import { getPdfAnnotationColorLabel } from '../pdf/pdfViewerUtils';
 import { MarkdownPreview } from './assistantSidebarPrimitives';
 
 function clampSelectionPopoverPosition(value: number, min: number, max: number) {
@@ -127,6 +129,9 @@ function resolveAnchorRectPopoverPosition({
 }
 
 export interface SelectionQuickActionsProps {
+  highlightColor: string;
+  onHighlightColorChange: (color: string) => void;
+  onMarkSelection: (style: TextMarkupStyle | 'clear') => void;
   selectedExcerpt: SelectedExcerpt | null;
   selectedExcerptTranslation: string;
   selectedExcerptTranslating: boolean;
@@ -140,6 +145,9 @@ export interface SelectionQuickActionsProps {
 }
 
 export function SelectionQuickActions({
+  highlightColor,
+  onHighlightColorChange,
+  onMarkSelection,
   selectedExcerpt,
   selectedExcerptTranslation,
   selectedExcerptTranslating,
@@ -358,6 +366,10 @@ export function SelectionQuickActions({
     >
       <div
         ref={popoverRef}
+        data-annotation-ui="true"
+        onMouseDown={(event) => {
+          if (event.target instanceof Element && event.target.closest('button')) event.preventDefault();
+        }}
         role="dialog"
         aria-label={translationTitle}
         className="pointer-events-auto w-[min(360px,calc(100vw-32px))] rounded-[20px] border border-[var(--pq-border)] bg-[var(--pq-surface-1)] p-3 text-[var(--pq-text)] shadow-[var(--pq-shadow-dialog)]"
@@ -388,6 +400,35 @@ export function SelectionQuickActions({
           </button>
         </div>
 
+        <div className="mt-3 rounded-2xl border border-[var(--pq-border)] p-2.5">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <span className="text-xs text-[var(--pq-text-muted)]">{l('标记颜色', 'Mark color')}</span>
+            {PDF_ANNOTATION_COLOR_PRESETS.map((preset) => (
+              <button key={preset.id} type="button"
+                onClick={() => onHighlightColorChange(preset.highlightHex)}
+                aria-label={`${l('标记颜色', 'Mark color')} · ${getPdfAnnotationColorLabel(preset.id, l)}`}
+                title={`${l('标记颜色', 'Mark color')} · ${getPdfAnnotationColorLabel(preset.id, l)}`}
+                aria-pressed={highlightColor === preset.highlightHex}
+                className={`h-6 w-6 rounded-full border-2 ${highlightColor === preset.highlightHex ? 'border-indigo-600' : 'border-transparent'}`}
+                style={{ backgroundColor: preset.highlightHex }} />
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {([
+              ['highlight', l('高亮', 'Highlight'), Highlighter],
+              ['underline', l('下划线', 'Underline'), Underline],
+              ...(selectedExcerpt.source === 'blocks' ? [['clear', l('清除标记', 'Clear marks'), Eraser] as const] : []),
+            ] as const).map(([style, label, Icon]) => (
+              <button key={style} type="button" onClick={() => onMarkSelection(style)}
+                disabled={!(selectedExcerpt.pdfTextSelection?.length || selectedExcerpt.blockTextRanges?.length)}
+                title={l('拖选文字后添加或清除标记', 'Select text to add or clear marks')}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--pq-border)] px-2.5 py-1.5 text-sm hover:bg-[var(--pq-hover)] disabled:opacity-40">
+                <Icon className="h-4 w-4" />{label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         <div className="mt-3 rounded-2xl border border-[var(--pq-border)] bg-[var(--pq-surface-2)] px-3 py-2.5">
           <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--pq-text-muted)]">
             {translationTitle}
@@ -400,7 +441,7 @@ export function SelectionQuickActions({
           </div>
         </div>
 
-        <div className="mt-3 flex items-center gap-2">
+        <div className="mt-3 flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={onAppendSelectedExcerptToQa}

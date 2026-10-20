@@ -726,7 +726,7 @@ function BlockItemComponent({
       ) : null}
 
       {block.type === 'title' ? (
-        <div className={cn('first:mt-0', compactMode ? 'mt-2' : 'mt-4')}>
+        <div data-text-mark-content={showTranslatedOnly ? 'translation' : 'original'} className={cn('first:mt-0', compactMode ? 'mt-2' : 'mt-4')}>
           <MarkdownContent
             markdown={
               effectiveMarkdown ||
@@ -738,41 +738,47 @@ function BlockItemComponent({
       ) : null}
 
       {block.type === 'image' ? (
-        <ImageContent
-          assetPath={assetPath}
-          captionText={captionText}
-          fallbackMarkdown={markdown}
-          translatedText={translatedText}
-          showTranslatedOnly={showTranslatedOnly}
-          showBilingual={showBilingual}
-          scale={scale}
-        />
+        <div data-text-mark-content={`image-${translationDisplayMode}`}>
+          <ImageContent
+            assetPath={assetPath}
+            captionText={captionText}
+            fallbackMarkdown={markdown}
+            translatedText={translatedText}
+            showTranslatedOnly={showTranslatedOnly}
+            showBilingual={showBilingual}
+            scale={scale}
+          />
+        </div>
       ) : null}
 
       {block.type === 'table' ? (
-        <TableContent
-          assetPath={assetPath}
-          captionText={captionText}
-          captionMathMarkdown={captionMathMarkdown}
-          displayCaptionText={renderable.tableDisplayCaptionText}
-          tableFootnoteText={tableFootnoteText}
-          tableOcrMarkdown={tableOcrMarkdown}
-          tableHtml={tableHtml}
-          fallbackMarkdown={markdown}
-          translatedText={translatedText}
-          showTranslatedOnly={showTranslatedOnly}
-          showBilingual={showBilingual}
-          scale={scale}
-        />
+        <div data-text-mark-content={`table-${translationDisplayMode}`}>
+          <TableContent
+            assetPath={assetPath}
+            captionText={captionText}
+            captionMathMarkdown={captionMathMarkdown}
+            displayCaptionText={renderable.tableDisplayCaptionText}
+            tableFootnoteText={tableFootnoteText}
+            tableOcrMarkdown={tableOcrMarkdown}
+            tableHtml={tableHtml}
+            fallbackMarkdown={markdown}
+            translatedText={translatedText}
+            showTranslatedOnly={showTranslatedOnly}
+            showBilingual={showBilingual}
+            scale={scale}
+          />
+        </div>
       ) : null}
 
       {!['title', 'image', 'table'].includes(block.type) ? (
         <>
-          {block.type === 'equation' ? (
-            <EquationContent latex={mathText || markdown} scale={scale} />
-          ) : (
-            <MarkdownContent markdown={displayMarkdown} scale={scale} />
-          )}
+          <div data-text-mark-content={showTranslatedOnly ? 'translation' : 'original'}>
+            {block.type === 'equation' ? (
+              <EquationContent latex={mathText || markdown} scale={scale} />
+            ) : (
+              <MarkdownContent markdown={displayMarkdown} scale={scale} />
+            )}
+          </div>
 
           {showBilingual && translatedText && block.type !== 'equation' ? (
             <div className="mt-4 rounded-[18px] border border-indigo-100 bg-indigo-50/70 px-4 py-3 dark:border-white/10 dark:bg-[var(--pq-surface-1)]">
@@ -780,7 +786,9 @@ function BlockItemComponent({
                 <Languages className="h-3.5 w-3.5" strokeWidth={1.9} />
                 {l('译文', 'Translation')}
               </div>
-              <MarkdownContent markdown={displayTranslatedMarkdown || ''} scale={scale} />
+              <div data-text-mark-content="translation">
+                <MarkdownContent markdown={displayTranslatedMarkdown || ''} scale={scale} />
+              </div>
             </div>
           ) : null}
         </>
