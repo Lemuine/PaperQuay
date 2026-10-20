@@ -233,3 +233,55 @@ test('Reader standalone visual notes match source order in original translated a
     await server.close();
   }
 });
+
+test('image and table text marks keep the same text offsets across display modes', async () => {
+  const server = await createServer({
+    configFile: false, logLevel: 'silent', plugins: [react()],
+    server: { middlewareMode: true }, appType: 'custom',
+  });
+  try {
+    const { BlockItem } = await server.ssrLoadModule('/src/features/blocks/blockViewerContent.tsx');
+    const { parseMineruPages, flattenMineruPages, buildRenderableBlocks } =
+      await server.ssrLoadModule('/src/services/mineru.ts');
+    const textContent = node => node.nodeName === '#text' ? node.value
+      : (node.childNodes ?? []).map(textContent).join('');
+    for (const type of ['image', 'table']) {
+      const [renderable] = buildRenderableBlocks(flattenMineruPages(parseMineruPages([{
+        type, [`${type}_caption`]: 'Figure 1. Original caption.', text: 'Original details.',
+        ...(type === 'table' ? {
+          html: '<table><tbody><tr><td>Original cell</td></tr></tbody></table>',
+          table_footnote: 'Original footnote.',
+        } : {}),
+      }])));
+      const markedText = mode => {
+        const html = renderToStaticMarkup(createElement(BlockItem, {
+          renderable, active: false, hovered: false, flashing: false, scale: 1,
+          showBlockMeta: false, compactMode: false, translatedText: 'Translated caption and cells.',
+          translationDisplayMode: mode, onClick() {}, registerRef() {},
+        }));
+        const contents = {};
+        const visit = node => {
+          const key = node.attrs?.find(attr => attr.name === 'data-text-mark-content')?.value;
+          if (key) {
+            assert.ok(!(key in contents), `Duplicate ${type} content key: ${key}`);
+            contents[key] = textContent(node);
+          }
+          for (const child of node.childNodes ?? []) visit(child);
+        };
+        visit(parseFragment(html));
+        return contents;
+      };
+      const original = markedText('original');
+      const translated = markedText('translated');
+      const bilingual = markedText('bilingual');
+      assert.deepEqual(Object.keys(original), ['original']);
+      assert.deepEqual(Object.keys(translated), ['translation']);
+      assert.deepEqual(bilingual, { ...original, ...translated }, type);
+      assert.match(original.original, /Original caption/);
+      if (type === 'table') assert.match(original.original, /Original cell.*Original footnote/s);
+      assert.equal(translated.translation, 'Translated caption and cells.');
+    }
+  } finally {
+    await server.close();
+  }
+});

@@ -137,6 +137,7 @@ export interface SelectionQuickActionsProps {
   selectedExcerptTranslating: boolean;
   selectedExcerptError: string;
   aiConfigured: boolean;
+  translationEnabled: boolean;
   autoTranslateSelection: boolean;
   onAppendSelectedExcerptToQa: () => void;
   onAddSelectionToNote: () => void;
@@ -153,6 +154,7 @@ export function SelectionQuickActions({
   selectedExcerptTranslating,
   selectedExcerptError,
   aiConfigured,
+  translationEnabled,
   autoTranslateSelection,
   onAppendSelectedExcerptToQa,
   onAddSelectionToNote,
@@ -371,7 +373,7 @@ export function SelectionQuickActions({
           if (event.target instanceof Element && event.target.closest('button')) event.preventDefault();
         }}
         role="dialog"
-        aria-label={translationTitle}
+        aria-label={translationEnabled ? translationTitle : l('文字标记', 'Text marks')}
         className="pointer-events-auto w-[min(360px,calc(100vw-32px))] rounded-[20px] border border-[var(--pq-border)] bg-[var(--pq-surface-1)] p-3 text-[var(--pq-text)] shadow-[var(--pq-shadow-dialog)]"
         style={{
           maxHeight: `calc(100vh - ${POPOVER_VIEWPORT_MARGIN * 2}px)`,
@@ -429,7 +431,7 @@ export function SelectionQuickActions({
           </div>
         </div>
 
-        <div className="mt-3 rounded-2xl border border-[var(--pq-border)] bg-[var(--pq-surface-2)] px-3 py-2.5">
+        {translationEnabled ? <div className="mt-3 rounded-2xl border border-[var(--pq-border)] bg-[var(--pq-surface-2)] px-3 py-2.5">
           <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--pq-text-muted)]">
             {translationTitle}
           </div>
@@ -439,7 +441,7 @@ export function SelectionQuickActions({
               className="text-sm leading-6 text-[var(--pq-text)] [&_.katex-display]:my-1 [&_p]:my-0 [&_p]:leading-6"
             />
           </div>
-        </div>
+        </div> : null}
 
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <button
@@ -456,7 +458,7 @@ export function SelectionQuickActions({
           >
             {l('加入笔记', 'Add to Note')}
           </button>
-          <button
+          {translationEnabled ? <button
             type="button"
             onClick={onTranslateSelectedExcerpt}
             className="inline-flex items-center rounded-xl border border-[var(--pq-border)] bg-[var(--pq-surface-1)] px-3 py-2 text-sm font-medium text-[var(--pq-text)] transition-colors hover:bg-[var(--pq-hover)]"
@@ -464,7 +466,7 @@ export function SelectionQuickActions({
             {selectedExcerptTranslation.trim()
               ? l('重新翻译', 'Translate Again')
               : l('立即翻译', 'Translate Now')}
-          </button>
+          </button> : null}
         </div>
       </div>
     </div>

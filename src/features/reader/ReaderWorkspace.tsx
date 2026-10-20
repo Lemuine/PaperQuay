@@ -153,6 +153,7 @@ interface ReaderWorkspaceProps {
   selectedExcerptTranslation: string;
   selectedExcerptTranslating: boolean;
   selectedExcerptError: string;
+  selectionTranslationEnabled: boolean;
   autoTranslateSelection: boolean;
   onAppendSelectedExcerptToQa: () => void;
   onTranslateSelectedExcerpt: () => void;
@@ -439,6 +440,7 @@ function ReadingStage(props: ReaderWorkspaceProps & { immersiveReading: boolean 
         selectedExcerptTranslating={selectedExcerptTranslating}
         selectedExcerptError={selectedExcerptError}
         aiConfigured={aiConfigured}
+        translationEnabled={props.selectionTranslationEnabled}
         autoTranslateSelection={props.autoTranslateSelection}
         onAppendSelectedExcerptToQa={onAppendSelectedExcerptToQa}
         onAddSelectionToNote={onAddSelectionToNote}

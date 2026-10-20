@@ -2165,14 +2165,9 @@ function DocumentReaderTab({
   ]);
 
   useEffect(() => {
-    if (!selectedExcerpt) {
-      return;
-    }
-
     if (
-      selectedExcerpt.origin === 'pdf-block'
-        ? !settings.enablePdfParagraphTranslationPopover
-        : !settings.enableSelectionTranslation
+      selectedExcerpt?.origin === 'pdf-block' &&
+      !settings.enablePdfParagraphTranslationPopover
     ) {
       handleClearSelectedExcerpt();
     }
@@ -2180,7 +2175,6 @@ function DocumentReaderTab({
     handleClearSelectedExcerpt,
     selectedExcerpt,
     settings.enablePdfParagraphTranslationPopover,
-    settings.enableSelectionTranslation,
   ]);
 
   const legacyHandlePdfAnnotationSaveSuccess = useCallback((path: string) => {
@@ -3939,6 +3933,8 @@ function DocumentReaderTab({
         selectedExcerptTranslation={selectedExcerptTranslation}
         selectedExcerptTranslating={selectedExcerptTranslating}
         selectedExcerptError={selectedExcerptError}
+        selectionTranslationEnabled={selectedExcerpt?.origin === 'pdf-block'
+          ? settings.enablePdfParagraphTranslationPopover : settings.enableSelectionTranslation}
         autoTranslateSelection={settings.enableSelectionTranslation && settings.autoTranslateSelection}
         onAppendSelectedExcerptToQa={handleAppendSelectedExcerptToQa}
         onTranslateSelectedExcerpt={() => void handleTranslateSelectedExcerpt()}
