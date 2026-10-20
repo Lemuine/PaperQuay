@@ -227,7 +227,7 @@ function titleSimilarity(left, right) {
   return Math.max(diceCoefficient(normalizedLeft, normalizedRight), containmentScore);
 }
 
-function bestOpenAlexTitleMatch(results, requestedTitle) {
+function bestMetadataTitleMatch(results, requestedTitle) {
   const candidates = (Array.isArray(results) ? results : [])
     .map((item) => ({
       item,
@@ -393,7 +393,7 @@ async function lookupOpenAlexMetadata({ doi, title, settings }) {
   }
 
   const data = await readRequestJson(await fetch(endpoint), 'OpenAlex metadata');
-  const item = doi ? data : bestOpenAlexTitleMatch(data?.results, title);
+  const item = doi ? data : bestMetadataTitleMatch(data?.results, title);
   return mapOpenAlexWork(item);
 }
 
@@ -401,7 +401,7 @@ async function lookupCrossrefMetadata({ doi, title }) {
   const endpoint = doi
     ? `https://api.crossref.org/works/${encodeURIComponent(doi)}`
     : title
-      ? `https://api.crossref.org/works?rows=1&query.title=${encodeURIComponent(title)}`
+      ? `https://api.crossref.org/works?rows=5&query.title=${encodeURIComponent(title)}`
       : '';
 
   if (!endpoint) {
@@ -409,7 +409,7 @@ async function lookupCrossrefMetadata({ doi, title }) {
   }
 
   const data = await readRequestJson(await fetch(endpoint), 'Crossref metadata');
-  const item = doi ? data.message : data.message?.items?.[0];
+  const item = doi ? data.message : bestMetadataTitleMatch(data.message?.items, title);
   return mapCrossrefWork(item);
 }
 
