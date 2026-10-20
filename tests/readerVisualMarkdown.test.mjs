@@ -234,7 +234,7 @@ test('Reader standalone visual notes match source order in original translated a
   }
 });
 
-test('image and table text marks keep the same text offsets across display modes', async () => {
+test('image, table and equation text marks keep the same text offsets across display modes', async () => {
   const server = await createServer({
     configFile: false, logLevel: 'silent', plugins: [react()],
     server: { middlewareMode: true }, appType: 'custom',
@@ -245,14 +245,15 @@ test('image and table text marks keep the same text offsets across display modes
       await server.ssrLoadModule('/src/services/mineru.ts');
     const textContent = node => node.nodeName === '#text' ? node.value
       : (node.childNodes ?? []).map(textContent).join('');
-    for (const type of ['image', 'table']) {
-      const [renderable] = buildRenderableBlocks(flattenMineruPages(parseMineruPages([{
+    for (const type of ['image', 'table', 'equation']) {
+      const fixture = type === 'equation' ? { type, text: 'x + y = 1' } : {
         type, [`${type}_caption`]: 'Figure 1. Original caption.', text: 'Original details.',
         ...(type === 'table' ? {
           html: '<table><tbody><tr><td>Original cell</td></tr></tbody></table>',
           table_footnote: 'Original footnote.',
         } : {}),
-      }])));
+      };
+      const [renderable] = buildRenderableBlocks(flattenMineruPages(parseMineruPages([fixture])));
       const markedText = mode => {
         const html = renderToStaticMarkup(createElement(BlockItem, {
           renderable, active: false, hovered: false, flashing: false, scale: 1,
@@ -275,6 +276,12 @@ test('image and table text marks keep the same text offsets across display modes
       const translated = markedText('translated');
       const bilingual = markedText('bilingual');
       assert.deepEqual(Object.keys(original), ['original']);
+      if (type === 'equation') {
+        assert.match(original.original, /x\s*\+\s*y\s*=\s*1/);
+        assert.deepEqual(translated, original);
+        assert.deepEqual(bilingual, original);
+        continue;
+      }
       assert.deepEqual(Object.keys(translated), ['translation']);
       assert.deepEqual(bilingual, { ...original, ...translated }, type);
       assert.match(original.original, /Original caption/);

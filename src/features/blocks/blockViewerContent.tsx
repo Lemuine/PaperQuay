@@ -778,7 +778,7 @@ function BlockItemComponent({
 
       {!['title', 'image', 'table'].includes(block.type) ? (
         <>
-          <div data-text-mark-content={showTranslatedOnly ? 'translation' : 'original'}>
+          <div data-text-mark-content={showTranslatedOnly && block.type !== 'equation' ? 'translation' : 'original'}>
             {block.type === 'equation' ? (
               <EquationContent latex={mathText || markdown} scale={scale} />
             ) : (
